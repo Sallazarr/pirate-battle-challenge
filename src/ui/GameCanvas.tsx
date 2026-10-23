@@ -190,7 +190,8 @@ export function GameCanvas() {
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundImage: 'url(/assets/ui_scene_background.jpg)',
           backgroundSize: 'cover', backgroundPosition: 'center',
-          zIndex: 30, display: 'flex', justifyContent: 'center', alignItems: 'center'
+          zIndex: 30, display: 'flex', justifyContent: 'center', alignItems: 'center',
+          padding: '10px', boxSizing: 'border-box'
         }}>
           <div style={panelImageStyle}>
             <img 
@@ -215,7 +216,7 @@ export function GameCanvas() {
               Navigate the islands. Survive the battle.
             </p>
 
-            <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', width: '100%' }}>
+            <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', width: '100%', flexWrap: 'wrap' }}>
               <MenuButton text="RANKING" onClick={() => setShowRankingModal(true)} type="secondary" />
               <MenuButton text="HISTORY" onClick={() => setShowHistoryModal(true)} type="secondary" />
             </div>
@@ -238,7 +239,7 @@ export function GameCanvas() {
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          backdropFilter: 'blur(4px)'
+          backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
         }}>
           <div style={{ ...panelImageStyle, minHeight: '550px' }}>
             <h2 style={{ textAlign: 'center', color: '#fbe29f', marginTop: 0, textShadow: '2px 2px 0 #3e1d04', fontFamily: GAME_FONT, fontSize: '1.8rem' }}>
@@ -283,7 +284,7 @@ export function GameCanvas() {
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          backdropFilter: 'blur(4px)'
+          backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
         }}>
           <div style={{ ...panelImageStyle, minHeight: '550px' }}>
             <h2 style={{ textAlign: 'center', color: '#fbe29f', marginTop: 0, textShadow: '2px 2px 0 #3e1d04', fontFamily: GAME_FONT, fontSize: '1.8rem' }}>
@@ -314,24 +315,24 @@ export function GameCanvas() {
         </div>
       )}
 
-      {/* HUD SUPERIOR EM JOGO */}
+      {/* HUD SUPERIOR EM JOGO (Adaptado para mobile) */}
       {hasStarted && (
         <div style={{
-          position: 'absolute', top: 20, left: 20, right: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-          zIndex: 10, fontFamily: GAME_FONT, pointerEvents: 'none'
+          position: 'absolute', top: 10, left: 10, right: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+          zIndex: 10, fontFamily: GAME_FONT, pointerEvents: 'none', flexWrap: 'wrap', gap: '8px'
         }}>
           <div style={{
-            backgroundColor: 'rgba(0, 26, 51, 0.85)', border: '3px solid #d4a351', borderRadius: '10px',
-            padding: '10px 15px', display: 'flex', alignItems: 'center', gap: '12px',
-            boxShadow: '0 5px 15px rgba(0,0,0,0.5)'
+            backgroundColor: 'rgba(0, 26, 51, 0.85)', border: '2px solid #d4a351', borderRadius: '8px',
+            padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '8px',
+            boxShadow: '0 4px 10px rgba(0,0,0,0.5)'
           }}>
-            <span style={{ fontSize: '1.4rem' }}>❤️</span>
-            <div style={{ width: '140px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#fff', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '4px' }}>
+            <span style={{ fontSize: '1.2rem' }}>❤️</span>
+            <div style={{ width: '110px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#fff', fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '2px' }}>
                 <span>HEALTH</span>
                 <span>{health}/100</span>
               </div>
-              <div style={{ width: '100%', height: '12px', backgroundColor: '#1e293b', borderRadius: '6px', overflow: 'hidden', border: '1px solid #475569' }}>
+              <div style={{ width: '100%', height: '10px', backgroundColor: '#1e293b', borderRadius: '5px', overflow: 'hidden', border: '1px solid #475569' }}>
                 <div style={{ 
                   width: `${Math.max(0, Math.min(100, health))}%`, 
                   height: '100%', 
@@ -342,28 +343,28 @@ export function GameCanvas() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', pointerEvents: 'auto' }}>
+          <div style={{ display: 'flex', gap: '6px', pointerEvents: 'auto' }}>
             <div style={{
-              backgroundColor: 'rgba(0, 26, 51, 0.85)', border: '3px solid #d4a351', borderRadius: '10px',
-              padding: '10px 18px', display: 'flex', alignItems: 'center', gap: '10px',
-              boxShadow: '0 5px 15px rgba(0,0,0,0.5)', color: '#fff', fontFamily: GAME_FONT
+              backgroundColor: 'rgba(0, 26, 51, 0.85)', border: '2px solid #d4a351', borderRadius: '8px',
+              padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '6px',
+              boxShadow: '0 4px 10px rgba(0,0,0,0.5)', color: '#fff', fontFamily: GAME_FONT
             }}>
-              <span style={{ fontSize: '1.2rem' }}>🏆</span>
+              <span style={{ fontSize: '1rem' }}>🏆</span>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase' }}>Score</span>
-                <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fbe29f' }}>{score}</span>
+                <span style={{ fontSize: '0.6rem', color: '#94a3b8', textTransform: 'uppercase' }}>Score</span>
+                <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#fbe29f' }}>{score}</span>
               </div>
             </div>
 
             <div style={{
-              backgroundColor: 'rgba(0, 26, 51, 0.85)', border: '3px solid #d4a351', borderRadius: '10px',
-              padding: '10px 18px', display: 'flex', alignItems: 'center', gap: '10px',
-              boxShadow: '0 5px 15px rgba(0,0,0,0.5)', color: '#fff', fontFamily: GAME_FONT
+              backgroundColor: 'rgba(0, 26, 51, 0.85)', border: '2px solid #d4a351', borderRadius: '8px',
+              padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '6px',
+              boxShadow: '0 4px 10px rgba(0,0,0,0.5)', color: '#fff', fontFamily: GAME_FONT
             }}>
-              <span style={{ fontSize: '1.2rem' }}>⏱️</span>
+              <span style={{ fontSize: '1rem' }}>⏱️</span>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase' }}>Time</span>
-                <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: timeLeft <= 10 ? '#ef4444' : '#fbe29f' }}>{timeLeft}s</span>
+                <span style={{ fontSize: '0.6rem', color: '#94a3b8', textTransform: 'uppercase' }}>Time</span>
+                <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: timeLeft <= 10 ? '#ef4444' : '#fbe29f' }}>{timeLeft}s</span>
               </div>
             </div>
 
@@ -371,9 +372,9 @@ export function GameCanvas() {
               <button
                 onClick={handleTogglePause}
                 style={{
-                  backgroundColor: '#e69e35', border: '3px solid #6b3e1b', borderRadius: '10px',
-                  width: '48px', height: '48px', display: 'flex', justifyContent: 'center', alignItems: 'center',
-                  cursor: 'pointer', boxShadow: '0 5px 15px rgba(0,0,0,0.5)', color: '#3e1d04', fontSize: '1.2rem', fontWeight: 'bold'
+                  backgroundColor: '#e69e35', border: '2px solid #6b3e1b', borderRadius: '8px',
+                  width: '38px', height: '38px', display: 'flex', justifyContent: 'center', alignItems: 'center',
+                  cursor: 'pointer', boxShadow: '0 4px 10px rgba(0,0,0,0.5)', color: '#3e1d04', fontSize: '1rem', fontWeight: 'bold'
                 }}
                 title="Pause"
               >
@@ -384,15 +385,15 @@ export function GameCanvas() {
         </div>
       )}
 
-      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES */}
+      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES OTIMIZADOS PARA TOQUE */}
       {hasStarted && !isGameOver && !isPaused && (
         <div style={{
-          position: 'absolute', bottom: 20, left: 20, right: 20, 
+          position: 'absolute', bottom: 15, left: 10, right: 10, 
           display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
-          zIndex: 15, pointerEvents: 'none', userSelect: 'none'
+          zIndex: 15, pointerEvents: 'none', userSelect: 'none', boxSizing: 'border-box'
         }}>
           {/* Controles de Direção / Rotação (Esquerda) */}
-          <div style={{ display: 'flex', gap: '12px', pointerEvents: 'auto' }}>
+          <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto' }}>
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_turn_left.png"
               onPressChange={(active) => engineRef.current?.setControl('left', active)}
@@ -408,7 +409,7 @@ export function GameCanvas() {
           </div>
 
           {/* Controles de Disparo: Esquerda, Frente e Direita (Direita) */}
-          <div style={{ display: 'flex', gap: '10px', pointerEvents: 'auto' }}>
+          <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto' }}>
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_fire_left.png"
               onPressChange={(active) => engineRef.current?.setControl('fireLeft', active)}
@@ -433,7 +434,7 @@ export function GameCanvas() {
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.65)', zIndex: 20,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          backdropFilter: 'blur(3px)'
+          backdropFilter: 'blur(3px)', padding: '15px', boxSizing: 'border-box'
         }}>
           <div style={{ ...panelImageStyle, minHeight: 'auto', paddingBottom: '40px' }}>
             <h1 style={{ fontSize: '2.5rem', color: '#fbe29f', textShadow: '2px 2px 0 #3e1d04', margin: '0 0 10px 0', fontFamily: GAME_FONT }}>PAUSED</h1>
@@ -453,7 +454,7 @@ export function GameCanvas() {
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.8)', zIndex: 20,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          backdropFilter: 'blur(4px)'
+          backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
         }}>
           <div style={{ ...panelImageStyle, minHeight: 'auto', paddingBottom: '40px' }}>
             <h1 style={{ fontSize: '2.5rem', color: '#fbe29f', textShadow: '2px 2px 0 #3e1d04', margin: '0 0 10px 0', fontFamily: GAME_FONT, textAlign: 'center' }}>BATTLE COMPLETE</h1>
@@ -489,16 +490,35 @@ function MobileControlButton({ icon, onPressChange, title }: { icon: string, onP
 
   return (
     <button
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
+      onMouseDown={(e) => {
+        e.preventDefault();
         setIsPressed(true);
         onPressChange(true);
       }}
-      onPointerUp={() => {
+      onMouseUp={(e) => {
+        e.preventDefault();
         setIsPressed(false);
         onPressChange(false);
       }}
-      onPointerCancel={() => {
+      onMouseLeave={(e) => {
+        e.preventDefault();
+        if (isPressed) {
+          setIsPressed(false);
+          onPressChange(false);
+        }
+      }}
+      onTouchStart={(e) => {
+        e.preventDefault();
+        setIsPressed(true);
+        onPressChange(true);
+      }}
+      onTouchEnd={(e) => {
+        e.preventDefault();
+        setIsPressed(false);
+        onPressChange(false);
+      }}
+      onTouchCancel={(e) => {
+        e.preventDefault();
         setIsPressed(false);
         onPressChange(false);
       }}
@@ -508,8 +528,8 @@ function MobileControlButton({ icon, onPressChange, title }: { icon: string, onP
         backgroundRepeat: 'no-repeat',
         backgroundColor: 'transparent',
         border: 'none',
-        width: '60px',
-        height: '60px',
+        width: '54px',
+        height: '54px',
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
@@ -517,7 +537,7 @@ function MobileControlButton({ icon, onPressChange, title }: { icon: string, onP
         alignItems: 'center',
         outline: 'none',
         position: 'relative',
-        filter: 'drop-shadow(0px 4px 6px rgba(0,0,0,0.5))',
+        filter: 'drop-shadow(0px 3px 5px rgba(0,0,0,0.6))',
         transform: isPressed ? 'translateY(2px)' : 'none',
         pointerEvents: 'auto',
         touchAction: 'none',
@@ -528,11 +548,11 @@ function MobileControlButton({ icon, onPressChange, title }: { icon: string, onP
       <img 
         src={icon} 
         alt="" 
-        style={{ width: '26px', height: '26px', objectFit: 'contain', pointerEvents: 'none', margin: '0 auto' }} 
+        style={{ width: '22px', height: '22px', objectFit: 'contain', pointerEvents: 'none', margin: '0 auto' }} 
         onError={(e) => { e.currentTarget.style.display = 'none'; }}
       />
       {title && (
-        <span style={{ fontSize: '0.55rem', color: '#fbe29f', fontFamily: GAME_FONT, fontWeight: 'bold', textShadow: '1px 1px 0 #000', position: 'absolute', bottom: '4px', width: '100%', textAlign: 'center', pointerEvents: 'none' }}>
+        <span style={{ fontSize: '0.45rem', color: '#fbe29f', fontFamily: GAME_FONT, fontWeight: 'bold', textShadow: '1px 1px 0 #000', position: 'absolute', bottom: '2px', width: '100%', textAlign: 'center', pointerEvents: 'none' }}>
           {title}
         </span>
       )}
@@ -559,7 +579,7 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
       position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
       backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
       display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-      backdropFilter: 'blur(4px)'
+      backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
     }}>
       <div style={{
         backgroundImage: 'url(/assets/png/default/ui/menu/panel_menu.png)',
@@ -595,7 +615,7 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
           <label style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
             Game Session Time
           </label>
-          <div style={{ display: 'flex', gap: '5px', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '5px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
             {allowedGameTimes.map((time) => (
               <button
                 key={time} onClick={() => setGameTime(time)}

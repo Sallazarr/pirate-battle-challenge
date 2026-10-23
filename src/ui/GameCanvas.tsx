@@ -14,6 +14,32 @@ interface ScoreRecord {
   isFixture?: boolean;
 }
 
+interface StoredResult {
+  score: number;
+  health: number;
+  reason: string;
+  playerName: string;
+  date: string;
+}
+
+interface PendingScore {
+  idempotencyKey: string;
+  record: { score: number; reason: string; playerName: string };
+}
+
+const RESULT_STORAGE_KEY = 'pirate_battle_last_result';
+const PENDING_SCORE_KEY = 'pirate_battle_pending_score';
+const PAGE_SIZE = 5;
+
+function readStoredJson<T>(key: string): T | null {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) as T : null;
+  } catch {
+    return null;
+  }
+}
+
 export function GameCanvas() {
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -24,6 +50,13 @@ export function GameCanvas() {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showRankingModal, setShowRankingModal] = useState(false);
+  const [rankingPage, setRankingPage] = useState(0);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [savedResult, setSavedResult] = useState<StoredResult | null>(() => readStoredJson<StoredResult>(RESULT_STORAGE_KEY));
+  const [pendingScore, setPendingScore] = useState<PendingScore | null>(() => readStoredJson<PendingScore>(PENDING_SCORE_KEY));
+  const isE2EMode = (import.meta.env.DEV || import.meta.env.MODE === 'e2e') && new URLSearchParams(window.location.search).get('e2e') === '1';
+  const [isLoadingGame, setIsLoadingGame] = useState(false);
+  const [assetLoadError, setAssetLoadError] = useState(false);
 
   const [playerName, setPlayerName] = useState<string>(() => {
     return localStorage.getItem('pirate_battle_playername') || 'Captain Jack';
@@ -39,30 +72,46 @@ export function GameCanvas() {
   const [, setHighScore] = useState<number>(() => {
     return Number(localStorage.getItem('pirate_battle_highscore') || '0');
   });
-  const [health, setHealth] = useState(100);
+  const [health, setHealth] = useState(() => readStoredJson<StoredResult>(RESULT_STORAGE_KEY)?.health ?? 100);
   const [timeLeft, setTimeLeft] = useState(gameTime);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
 
-  const { data: scores = [], refetch } = useQuery<ScoreRecord[]>({
+  const { data: scores = [], refetch, isFetching: isFetchingScores, isError: isScoresError } = useQuery<ScoreRecord[]>({
     queryKey: ['scores'],
-    queryFn: async () => {
-      const response = await apiClient.get('/api/scores');
+    queryFn: async ({ signal }) => {
+      const response = await apiClient.get('/api/scores', { signal });
       return Array.isArray(response.data) ? response.data : [];
     },
     initialData: [],
   });
 
-  const { mutate: submitScore, isPending, isSuccess } = useMutation({
-    mutationFn: async (data: { score: number; reason: string; playerName: string }) => {
-      const response = await apiClient.post('/api/scores', data);
+  const { mutate: submitScore, isPending, isSuccess, isError: isSubmissionError } = useMutation({
+    mutationFn: async (pending: PendingScore) => {
+      const response = await apiClient.post('/api/scores', pending.record, {
+        headers: { 'Idempotency-Key': pending.idempotencyKey },
+        timeout: isE2EMode ? 700 : 10_000,
+      });
       return response.data;
     },
-    onSuccess: () => {
+    retry: 1,
+    retryDelay: 250,
+    onSuccess: (_data, completedPending) => {
+      const currentPending = readStoredJson<PendingScore>(PENDING_SCORE_KEY);
+      if (currentPending?.idempotencyKey === completedPending.idempotencyKey) {
+        localStorage.removeItem(PENDING_SCORE_KEY);
+        setPendingScore(null);
+      }
       queryClient.invalidateQueries({ queryKey: ['scores'] });
       refetch();
     }
   });
+
+  useEffect(() => {
+    if (pendingScore) submitScore(pendingScore);
+  // A stored outbox entry is intentionally submitted once when the UI mounts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -74,14 +123,14 @@ export function GameCanvas() {
     };
     const handleVisibilityChange = () => {
       if (document.hidden && engineRef.current && hasStarted && !isGameOver) {
-        engineRef.current.togglePause();
+        engineRef.current.pause();
       }
     };
     
     const isMobileTouch = window.matchMedia('(pointer: coarse)').matches;
     const handleWindowBlur = () => {
       if (engineRef.current && hasStarted && !isGameOver && !isMobileTouch) {
-        engineRef.current.togglePause();
+        engineRef.current.pause();
       }
     };
 
@@ -107,33 +156,60 @@ export function GameCanvas() {
     setShowOptionsModal(false);
   };
 
-  const startGame = () => {
-    setHasStarted(true);
+  const startGame = async () => {
+    setAssetLoadError(false);
+    setIsLoadingGame(true);
+    setIsGameOver(false);
+    setIsPaused(false);
+    setSavedResult(null);
+    localStorage.removeItem(RESULT_STORAGE_KEY);
     setTimeLeft(gameTime);
     const container = containerRef.current;
-    if (!container) return;
+    if (!container) {
+      setIsLoadingGame(false);
+      return;
+    }
 
     if (!engineRef.current) {
       const engine = new GameEngine();
       engineRef.current = engine;
-      
-      engine.init(container, gameTime, spawnTime, (newScore, newHealth, newTime, gameOverFlag, pausedFlag, currentHighScore) => {
-        setScore(newScore);
-        setHealth(newHealth);
-        setTimeLeft(newTime);
-        setIsGameOver(gameOverFlag);
-        setIsPaused(pausedFlag);
-        setHighScore(currentHighScore);
+      try {
+        await engine.init(container, gameTime, spawnTime, (newScore, newHealth, newTime, gameOverFlag, pausedFlag, currentHighScore) => {
+          setScore(newScore);
+          setHealth(newHealth);
+          setTimeLeft(newTime);
+          setIsGameOver(gameOverFlag);
+          setIsPaused(pausedFlag);
+          setHighScore(currentHighScore);
 
-        if (gameOverFlag && !gameOverFiredRef.current) {
-          gameOverFiredRef.current = true;
-          const reason = newHealth <= 0 ? 'ship_destroyed' : 'time_out';
-          submitScore({ score: newScore, reason, playerName });
-        }
-      });
+          if (gameOverFlag && !gameOverFiredRef.current) {
+            gameOverFiredRef.current = true;
+            const reason = newHealth <= 0 ? 'ship_destroyed' : 'time_out';
+            const result = { score: newScore, health: newHealth, reason, playerName, date: new Date().toISOString() };
+            const pending = {
+              idempotencyKey: globalThis.crypto.randomUUID(),
+              record: { score: newScore, reason, playerName },
+            };
+            localStorage.setItem(RESULT_STORAGE_KEY, JSON.stringify(result));
+            localStorage.setItem(PENDING_SCORE_KEY, JSON.stringify(pending));
+            setSavedResult(result);
+            setPendingScore(pending);
+            submitScore(pending);
+          }
+        });
+        setHasStarted(true);
+      } catch (error) {
+        engine.destroy();
+        if (engineRef.current === engine) engineRef.current = null;
+        setAssetLoadError(true);
+      } finally {
+        setIsLoadingGame(false);
+      }
     } else {
       gameOverFiredRef.current = false;
       engineRef.current.restart(gameTime, spawnTime);
+      setHasStarted(true);
+      setIsLoadingGame(false);
     }
   };
 
@@ -141,6 +217,13 @@ export function GameCanvas() {
     if (engineRef.current) {
       gameOverFiredRef.current = false;
       engineRef.current.restart(gameTime, spawnTime);
+      setSavedResult(null);
+      localStorage.removeItem(RESULT_STORAGE_KEY);
+    } else {
+      gameOverFiredRef.current = false;
+      setSavedResult(null);
+      localStorage.removeItem(RESULT_STORAGE_KEY);
+      void startGame();
     }
   };
 
@@ -153,6 +236,8 @@ export function GameCanvas() {
     setHasStarted(false);
     setIsGameOver(false);
     setIsPaused(false);
+    setSavedResult(null);
+    localStorage.removeItem(RESULT_STORAGE_KEY);
     refetch();
   };
 
@@ -163,7 +248,7 @@ export function GameCanvas() {
   };
 
   const safeScores = Array.isArray(scores) ? scores : [];
-  const myHistory = safeScores.filter(s => !s.isFixture).slice(0, 10);
+  const myHistory = safeScores.filter(s => !s.isFixture);
   const mockMatches = safeScores.filter(s => s.isFixture);
   const myMatches = safeScores.filter(s => !s.isFixture);
   const myBestMatch = myMatches.length > 0 
@@ -172,7 +257,11 @@ export function GameCanvas() {
 
   const rankingPool = [...mockMatches];
   if (myBestMatch) rankingPool.push(myBestMatch);
-  const topScores = rankingPool.sort((a, b) => b.score - a.score).slice(0, 10);
+  const topScores = rankingPool.sort((a, b) => b.score - a.score);
+  const visibleRanking = topScores.slice(rankingPage * PAGE_SIZE, (rankingPage + 1) * PAGE_SIZE);
+  const visibleHistory = myHistory.slice(historyPage * PAGE_SIZE, (historyPage + 1) * PAGE_SIZE);
+  const resultForDisplay = savedResult ?? { score, health, reason: health <= 0 ? 'ship_destroyed' : 'time_out', playerName, date: new Date().toISOString() };
+  const showResult = isGameOver || (!hasStarted && savedResult !== null);
 
   const panelImageStyle: React.CSSProperties = {
     backgroundImage: 'url(/assets/png/default/ui/menu/panel_menu.png)',
@@ -185,10 +274,10 @@ export function GameCanvas() {
   };
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100dvh', overflow: 'hidden', backgroundColor: '#001a33' }}>
+    <div data-testid="app-surface" style={{ position: 'relative', width: '100vw', height: '100dvh', overflow: 'hidden', backgroundColor: '#001a33' }}>
       
-      {!hasStarted && (
-        <div style={{
+      {!hasStarted && savedResult === null && (
+        <div data-testid="main-menu" style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundImage: 'url(/assets/ui_scene_background.jpg)',
           backgroundSize: 'cover', backgroundPosition: 'center',
@@ -206,7 +295,8 @@ export function GameCanvas() {
               Welcome, <span style={{ color: '#fbe29f' }}>{playerName}</span>
             </p>
 
-            <MenuButton text="PLAY" onClick={startGame} type="primary" />
+            <MenuButton text={assetLoadError ? 'RETRY' : isLoadingGame ? 'LOADING...' : 'PLAY'} onClick={startGame} type="primary" disabled={isLoadingGame} />
+            {assetLoadError && <p role="alert" data-testid="asset-load-error" style={{ color: '#ffb4a2', fontFamily: GAME_FONT }}>Some game assets failed to load. Retry?</p>}
             <div style={{ height: '15px' }} />
             <MenuButton text="OPTIONS" onClick={() => setShowOptionsModal(true)} type="primary" />
 
@@ -219,8 +309,8 @@ export function GameCanvas() {
             </p>
 
             <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', width: '100%', flexWrap: 'wrap' }}>
-              <MenuButton text="RANKING" onClick={() => setShowRankingModal(true)} type="secondary" />
-              <MenuButton text="HISTORY" onClick={() => setShowHistoryModal(true)} type="secondary" />
+              <MenuButton text="RANKING" onClick={() => { setRankingPage(0); setShowRankingModal(true); }} type="secondary" />
+              <MenuButton text="HISTORY" onClick={() => { setHistoryPage(0); setShowHistoryModal(true); }} type="secondary" />
             </div>
           </div>
         </div>
@@ -237,7 +327,7 @@ export function GameCanvas() {
       )}
 
       {showRankingModal && (
-        <div style={{
+        <div data-testid="ranking-modal" role="dialog" aria-label="Ranking" style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
@@ -250,7 +340,10 @@ export function GameCanvas() {
             
             <div style={{ width: '100%', flex: 1, overflowY: 'auto', marginBottom: '20px', fontFamily: GAME_FONT, color: '#fff' }}>
               <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                {topScores.map((match, idx) => {
+                {isFetchingScores && safeScores.length === 0 && <li data-testid="scores-loading">Loading scores...</li>}
+                {isScoresError && <li role="alert">Could not load scores. <button onClick={() => refetch()}>RETRY</button></li>}
+                {!isFetchingScores && !isScoresError && topScores.length === 0 && <li data-testid="ranking-empty">No scores found.</li>}
+                {visibleRanking.map((match, idx) => {
                   const isMe = !match.isFixture;
                   const displayTitle = isMe ? (match.playerName || playerName) : match.playerName;
 
@@ -276,13 +369,14 @@ export function GameCanvas() {
                 })}
               </ul>
             </div>
+            {topScores.length > PAGE_SIZE && <Pagination page={rankingPage} pages={Math.ceil(topScores.length / PAGE_SIZE)} onPageChange={setRankingPage} label="ranking" />}
             <MenuButton text="CLOSE" onClick={() => setShowRankingModal(false)} type="primary" />
           </div>
         </div>
       )}
 
       {showHistoryModal && (
-        <div style={{
+        <div data-testid="history-modal" role="dialog" aria-label="Match History" style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
@@ -294,11 +388,11 @@ export function GameCanvas() {
             </h2>
             
             <div style={{ width: '100%', flex: 1, overflowY: 'auto', marginBottom: '20px', fontFamily: GAME_FONT, color: '#fff' }}>
-              {myHistory.length === 0 ? (
+              {isFetchingScores && safeScores.length === 0 ? <p data-testid="scores-loading">Loading matches...</p> : isScoresError ? <p role="alert">Could not load matches. <button onClick={() => refetch()}>RETRY</button></p> : myHistory.length === 0 ? (
                 <p style={{ textAlign: 'center', color: '#aaa', marginTop: '20px', fontSize: '1rem' }}>No battles recorded for {playerName}.</p>
               ) : (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                  {myHistory.map((match, idx) => (
+                  {visibleHistory.map((match, idx) => (
                     <li key={match.id} style={{
                       display: 'flex', justifyContent: 'space-between', padding: '12px 0', fontSize: '1rem',
                       borderBottom: '1px solid rgba(255,255,255,0.1)'
@@ -312,6 +406,7 @@ export function GameCanvas() {
                 </ul>
               )}
             </div>
+            {myHistory.length > PAGE_SIZE && <Pagination page={historyPage} pages={Math.ceil(myHistory.length / PAGE_SIZE)} onPageChange={setHistoryPage} label="history" />}
             <MenuButton text="CLOSE" onClick={() => setShowHistoryModal(false)} type="primary" />
           </div>
         </div>
@@ -370,9 +465,11 @@ export function GameCanvas() {
               </div>
             </div>
 
-            {!isGameOver && (
+            {!showResult && (
               <button
                 onClick={handleTogglePause}
+                aria-label="Pause game"
+                data-testid="pause-button"
                 style={{
                   backgroundColor: '#e69e35', border: '2px solid #6b3e1b', borderRadius: '8px',
                   width: '38px', height: '38px', display: 'flex', justifyContent: 'center', alignItems: 'center',
@@ -408,14 +505,17 @@ export function GameCanvas() {
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_turn_left.png"
               onPressChange={(active) => engineRef.current?.setControl('left', active)}
+              title="TURN LEFT"
             />
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_turn_right.png"
               onPressChange={(active) => engineRef.current?.setControl('right', active)}
+              title="TURN RIGHT"
             />
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_forward.png"
               onPressChange={(active) => engineRef.current?.setControl('forward', active)}
+              title="FORWARD"
             />
           </div>
 
@@ -460,8 +560,8 @@ export function GameCanvas() {
         </div>
       )}
 
-      {isGameOver && (
-        <div style={{
+      {showResult && (
+        <div data-testid="result-screen" role="dialog" aria-label="Battle result" style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.8)', zIndex: 20,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
@@ -469,7 +569,7 @@ export function GameCanvas() {
         }}>
           <div style={{ ...panelImageStyle, minHeight: 'auto', paddingBottom: '40px' }}>
             <h1 style={{ fontSize: '2.5rem', color: '#fbe29f', textShadow: '2px 2px 0 #3e1d04', margin: '0 0 10px 0', fontFamily: GAME_FONT, textAlign: 'center' }}>BATTLE COMPLETE</h1>
-            <h2 style={{ fontSize: '4.5rem', margin: '10px 0', color: '#fff', textShadow: '3px 3px 0 #000', fontFamily: GAME_FONT }}>{score}</h2>
+            <h2 data-testid="result-score" style={{ fontSize: '4.5rem', margin: '10px 0', color: '#fff', textShadow: '3px 3px 0 #000', fontFamily: GAME_FONT }}>{resultForDisplay.score}</h2>
             
             <p style={{ color: '#aaa', fontSize: '1rem', marginBottom: '25px', fontFamily: GAME_FONT, textTransform: 'uppercase' }}>
               POINTS • {health <= 0 ? 'DEFEATED' : 'TIME UP'}
@@ -479,7 +579,7 @@ export function GameCanvas() {
               {isPending && <span>Saving score... ⏳</span>}
               {isSuccess && <span style={{ color: '#4CAF50' }}>Score saved! ✅</span>}
             </div>
-            
+            {isSubmissionError && pendingScore && <button data-testid="retry-score" onClick={() => submitScore(pendingScore)}>RETRY SAVE</button>}
             <MenuButton text="PLAY AGAIN" onClick={handleRestart} type="primary" />
             <div style={{ height: '15px' }} />
             <MenuButton text="MAIN MENU" onClick={handleReturnToMenu} type="primary" />
@@ -488,6 +588,16 @@ export function GameCanvas() {
       )}
 
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+    </div>
+  );
+}
+
+function Pagination({ page, pages, onPageChange, label }: { page: number; pages: number; onPageChange: (page: number) => void; label: string }) {
+  return (
+    <div data-testid={`${label}-pagination`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '12px', color: '#fff', fontFamily: GAME_FONT }}>
+      <button aria-label={`Previous ${label} page`} disabled={page === 0} onClick={() => onPageChange(Math.max(0, page - 1))}>PREVIOUS</button>
+      <span>{page + 1} / {pages}</span>
+      <button aria-label={`Next ${label} page`} disabled={page >= pages - 1} onClick={() => onPageChange(Math.min(pages - 1, page + 1))}>NEXT</button>
     </div>
   );
 }
@@ -501,6 +611,8 @@ function MobileControlButton({ icon, onPressChange, title }: { icon: string, onP
 
   return (
     <button
+      aria-label={title}
+      data-testid={title ? `touch-${title.toLowerCase().replaceAll(' ', '-')}` : undefined}
       onMouseDown={(e) => {
         e.preventDefault();
         setIsPressed(true);
@@ -586,7 +698,7 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
   const allowedSpawnTimes = [2, 3, 4, 5];
 
   return (
-    <div style={{
+        <div data-testid="options-modal" role="dialog" aria-label="Options" style={{
       position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
       backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
       display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
@@ -605,12 +717,14 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
         </h2>
 
         <div style={{ width: '100%', marginBottom: '20px', fontFamily: GAME_FONT }}>
-          <label style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
+          <label htmlFor="captain-name" style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
             Captain Name
           </label>
           <input 
+            id="captain-name"
             type="text" 
             maxLength={15}
+            required
             value={playerName}
             onChange={(e) => setPlayerName(e.target.value)}
             style={{
@@ -623,13 +737,15 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
         </div>
 
         <div style={{ width: '100%', marginBottom: '20px', fontFamily: GAME_FONT }}>
-          <label style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
+          <label htmlFor="session-time" style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
             Game Session Time
           </label>
           <div style={{ display: 'flex', gap: '5px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
             {allowedGameTimes.map((time) => (
               <button
                 key={time} onClick={() => setGameTime(time)}
+                aria-pressed={gameTime === time}
+                data-testid={`session-time-${time}`}
                 style={{
                   flex: 1, padding: '10px 0', fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer',
                   backgroundColor: gameTime === time ? '#e69e35' : 'rgba(0,0,0,0.4)',
@@ -645,13 +761,15 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
         </div>
 
         <div style={{ width: '100%', marginBottom: '30px', fontFamily: GAME_FONT }}>
-          <label style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
+          <label htmlFor="spawn-time" style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
             Enemy Spawn Time
           </label>
           <div style={{ display: 'flex', gap: '5px', justifyContent: 'space-between' }}>
             {allowedSpawnTimes.map((spawn) => (
               <button
                 key={spawn} onClick={() => setSpawnTime(spawn)}
+                aria-pressed={spawnTime === spawn}
+                data-testid={`spawn-time-${spawn}`}
                 style={{
                   flex: 1, padding: '10px 0', fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer',
                   backgroundColor: spawnTime === spawn ? '#e69e35' : 'rgba(0,0,0,0.4)',
@@ -666,7 +784,7 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
           </div>
         </div>
 
-        <MenuButton text="SAVE & CLOSE" onClick={() => onSave(gameTime, spawnTime, playerName || 'Captain Jack')} type="primary" />
+        <MenuButton text="SAVE & CLOSE" onClick={() => onSave(gameTime, spawnTime, playerName.trim() || 'Captain Jack')} type="primary" disabled={!playerName.trim()} />
         <div style={{ height: '10px' }} />
         <MenuButton text="CANCEL" onClick={onClose} type="secondary" />
       </div>
@@ -674,7 +792,7 @@ function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, on
   );
 }
 
-function MenuButton({ onClick, text, type = 'primary' }: { onClick: () => void, text: string, type?: 'primary' | 'secondary' }) {
+function MenuButton({ onClick, text, type = 'primary', disabled = false }: { onClick: () => void, text: string, type?: 'primary' | 'secondary', disabled?: boolean }) {
   const [interactionState, setInteractionState] = useState<'normal' | 'hover' | 'pressed'>('normal');
 
   const getBackgroundImage = () => {
@@ -690,6 +808,7 @@ function MenuButton({ onClick, text, type = 'primary' }: { onClick: () => void, 
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       onMouseEnter={() => setInteractionState('hover')}
       onMouseLeave={() => setInteractionState('normal')}
       onMouseDown={() => setInteractionState('pressed')}

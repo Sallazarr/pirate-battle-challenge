@@ -26,6 +26,14 @@ const saveStoredScores = (scores: any[]) => {
   localStorage.setItem('pirate_battle_scores', JSON.stringify(scores));
 };
 
+const getIdempotentRecords = (): Record<string, any> => {
+  try {
+    return JSON.parse(localStorage.getItem('pirate_battle_score_idempotency') || '{}');
+  } catch {
+    return {};
+  }
+};
+
 export const handlers = [
   http.get('*/api/scores', () => {
     const localScores = getStoredScores();
@@ -35,6 +43,11 @@ export const handlers = [
 
   http.post('*/api/scores', async ({ request }) => {
     const newRecord = (await request.json()) as any;
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    const existingRecords = getIdempotentRecords();
+    if (idempotencyKey && existingRecords[idempotencyKey]) {
+      return HttpResponse.json(existingRecords[idempotencyKey]);
+    }
     const scores = getStoredScores();
     
     const recordWithId = {
@@ -46,6 +59,10 @@ export const handlers = [
 
     scores.unshift(recordWithId);
     saveStoredScores(scores);
+    if (idempotencyKey) {
+      existingRecords[idempotencyKey] = recordWithId;
+      localStorage.setItem('pirate_battle_score_idempotency', JSON.stringify(existingRecords));
+    }
 
     return HttpResponse.json(recordWithId, { status: 201 });
   }),

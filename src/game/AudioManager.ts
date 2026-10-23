@@ -1,3 +1,5 @@
+import { random } from './random';
+
 export class AudioManager {
   private sounds: Map<string, HTMLAudioElement> = new Map();
   private oceanAmbience: HTMLAudioElement | null = null;
@@ -163,23 +165,23 @@ export class AudioManager {
     if (isLateral) {
       this.playSound('cannon_broadside.wav', 0.15);
     } else {
-      const num = Math.floor(Math.random() * 3) + 1;
+      const num = Math.floor(random() * 3) + 1;
       this.playSound(`cannon_fire_${num}.wav`, 0.12);
     }
   }
 
   public playExplosion() {
-    const num = Math.floor(Math.random() * 2) + 1;
+    const num = Math.floor(random() * 2) + 1;
     this.playSound(`ship_explosion_${num}.wav`, 0.18);
   }
 
   public playWoodHit() {
-    const num = Math.floor(Math.random() * 2) + 1;
+    const num = Math.floor(random() * 2) + 1;
     this.playSound(`ship_wood_hit_${num}.wav`, 0.15);
   }
 
   public playWaterHit() {
-    const num = Math.floor(Math.random() * 2) + 1;
+    const num = Math.floor(random() * 2) + 1;
     this.playSound(`cannonball_water_hit_${num}.wav`, 0.10);
   }
 

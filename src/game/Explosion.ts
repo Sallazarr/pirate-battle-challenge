@@ -1,4 +1,5 @@
 import { Sprite, Assets } from 'pixi.js';
+import { random } from './random';
 
 export class Explosion {
   public sprite: Sprite;
@@ -27,7 +28,7 @@ export class Explosion {
     this.sprite.y = y;
     
     // Repõe o tipo e a textura
-    this.type = type || (Math.floor(Math.random() * 2) + 1);
+    this.type = type || (Math.floor(random() * 2) + 1);
     
     // Tenta repor a textura em cache para o novo tipo, se já estiver carregada na memória global
     import('pixi.js').then(({ Assets }) => {

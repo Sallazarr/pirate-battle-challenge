@@ -1,4 +1,4 @@
-import { Container, Sprite, Assets, Rectangle } from 'pixi.js';
+import { Container, Sprite, Assets, Rectangle, TilingSprite } from 'pixi.js';
 import { buildMapData, TILE, COLS, ROWS } from './mapData';
 
 export class GameMap {
@@ -21,12 +21,15 @@ export class GameMap {
       for (const row of layer.data) for (const cell of row) if (cell) ids.add(cell.id);
     await Promise.all([...ids].map(id => Assets.load(this.path(id))));
 
-    // OCEANO EXPANDIDO: Garante cobertura total para monitores 1440p, Ultrawide e 4K
-    for (let r = -60; r <= 60; r++) {
-      for (let c = -60; c <= 80; c++) {
-        this.addTile(73, c * TILE, r * TILE, TILE);
-      }
-    }
+    // Repete o oceano em um único sprite para evitar criar milhares de sprites.
+    const ocean = new TilingSprite({
+      texture: Assets.get(this.path(73)),
+      width: 140 * TILE,
+      height: 121 * TILE,
+    });
+    ocean.x = -60 * TILE;
+    ocean.y = -60 * TILE;
+    this.container.addChild(ocean);
 
     for (const layer of map.layers) {
       for (let row = 0; row < ROWS; row++) {

@@ -3,19 +3,30 @@ import { Sprite, Assets } from 'pixi.js';
 export class Chaser {
   public sprite: Sprite;
   public isDead = false;
+  public health: number;
+  public modelId: string;
   
   private speed = 2;
+  private texturePath: string;
 
-  constructor(x: number, y: number) {
+  constructor(x: number, y: number, model: 'basic' | 'advanced' = 'basic') {
     this.sprite = new Sprite();
     this.sprite.anchor.set(0.5);
     this.sprite.x = x;
     this.sprite.y = y;
+    this.health = model === 'advanced' ? 2 : 1;
+    const shipModel = model === 'advanced' ? 4 : 7;
+    this.modelId = model === 'advanced' ? 'chaser-advanced' : 'chaser-basic';
+    this.texturePath = `/assets/png/default/ships/ship_${shipModel}.png`;
   }
 
   public async init() {
-    // Confirme se o nome do asset corresponde a um navio inimigo na sua pasta
-    this.sprite.texture = await Assets.load('/assets/png/default/ships/ship_7.png');
+    this.sprite.texture = await Assets.load(this.texturePath);
+  }
+
+  public takeHit(): boolean {
+    this.health = Math.max(0, this.health - 1);
+    return this.health === 0;
   }
 
   // Recebe a posição do jogador para o perseguir

@@ -1,4 +1,5 @@
 import { Sprite, Assets } from 'pixi.js';
+import { now } from './gameClock';
  
 export interface PlayerInputs {
   up: boolean;
@@ -62,7 +63,7 @@ export class Player {
   }
  
   public async init() {
-    this.sprite.texture = await Assets.load('/assets/png/default/ships/ship_1.png');
+    this.sprite.texture = await Assets.load('/assets/png/default/ships/ship_2.png');
     this.sprite.x = window.innerWidth / 2;
     this.sprite.y = window.innerHeight / 2;
     this.sprite.rotation = -Math.PI / 2;
@@ -82,17 +83,17 @@ export class Player {
       this.sprite.y += Math.sin(mathAngle) * this.moveSpeed * delta;
     }
  
-    const now = Date.now();
-    if (now - this.lastShotTime > this.shootCooldown) {
+    const currentTime = now();
+    if (currentTime - this.lastShotTime > this.shootCooldown) {
       if (this.inputs.space) {
         this.onShoot(this.sprite.x, this.sprite.y, mathAngle, false, mathAngle);
-        this.lastShotTime = now;
+        this.lastShotTime = currentTime;
       } else if (this.inputs.shift) {
         this.onShoot(this.sprite.x, this.sprite.y, mathAngle - Math.PI / 2, true, mathAngle);
-        this.lastShotTime = now;
+        this.lastShotTime = currentTime;
       } else if (this.inputs.ctrl) {
         this.onShoot(this.sprite.x, this.sprite.y, mathAngle + Math.PI / 2, true, mathAngle);
-        this.lastShotTime = now;
+        this.lastShotTime = currentTime;
       }
     }
   }

@@ -1,8 +1,11 @@
 import { Sprite, Assets } from 'pixi.js';
+import { now } from './gameClock';
 
 export class Shooter {
   public sprite: Sprite;
   public isDead = false;
+  public health: number;
+  public modelId: string;
 
   private speed = 1.5;
   private attackRange = 300;
@@ -10,18 +13,28 @@ export class Shooter {
   private shootCooldown = 2000; // Dispara a cada 2 segundos
 
   private onShoot: (x: number, y: number, angle: number) => void;
+  private texturePath: string;
 
-  constructor(x: number, y: number, onShoot: (x: number, y: number, angle: number) => void) {
+  constructor(
+    x: number,
+    y: number,
+    onShoot: (x: number, y: number, angle: number) => void,
+    model: 'basic' | 'advanced' = 'basic',
+    texturePath?: string
+  ) {
     this.sprite = new Sprite();
     this.sprite.anchor.set(0.5);
     this.sprite.x = x;
     this.sprite.y = y;
     this.onShoot = onShoot;
+    this.health = model === 'advanced' ? 2 : 1;
+    const shipModel = model === 'advanced' ? 6 : 13;
+    this.modelId = model === 'advanced' ? 'shooter-advanced' : 'shooter-basic';
+    this.texturePath = texturePath ?? `/assets/png/default/ships/ship_${shipModel}.png`;
   }
 
   public async init() {
-    // Usamos o navio normal para distinguir do Chaser (dark)
-    this.sprite.texture = await Assets.load('/assets/png/default/ships/ship_13.png');
+    this.sprite.texture = await Assets.load(this.texturePath);
   }
 
   public update(delta: number, playerX: number, playerY: number) {
@@ -37,13 +50,18 @@ export class Shooter {
       this.sprite.x += Math.cos(angle) * this.speed * delta;
       this.sprite.y += Math.sin(angle) * this.speed * delta;
     } else {
-      const now = Date.now();
-      if (now - this.lastShotTime > this.shootCooldown) {
+      const currentTime = now();
+      if (currentTime - this.lastShotTime > this.shootCooldown) {
         // O tiro é disparado no ângulo matemático
         this.onShoot(this.sprite.x, this.sprite.y, angle);
-        this.lastShotTime = now;
+        this.lastShotTime = currentTime;
       }
     }
+  }
+
+  public takeHit(): boolean {
+    this.health = Math.max(0, this.health - 1);
+    return this.health === 0;
   }
 
   public destroy() {

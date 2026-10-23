@@ -185,7 +185,7 @@ export function GameCanvas() {
   };
 
   return (
-    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#001a33' }}>
+    <div style={{ position: 'relative', width: '100vw', height: '100dvh', overflow: 'hidden', backgroundColor: '#001a33' }}>
       
       {!hasStarted && (
         <div style={{

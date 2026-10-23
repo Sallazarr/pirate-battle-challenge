@@ -36,7 +36,7 @@ export function GameCanvas() {
   });
 
   const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState<number>(() => {
+  const [, setHighScore] = useState<number>(() => {
     return Number(localStorage.getItem('pirate_battle_highscore') || '0');
   });
   const [health, setHealth] = useState(100);
@@ -384,7 +384,7 @@ export function GameCanvas() {
         </div>
       )}
 
-      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES (Totalmente interativos com ponteiro/rato/toque) */}
+      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES */}
       {hasStarted && !isGameOver && !isPaused && (
         <div style={{
           position: 'absolute', bottom: 20, left: 20, right: 20, 
@@ -494,11 +494,11 @@ function MobileControlButton({ icon, onPressChange, title }: { icon: string, onP
         setIsPressed(true);
         onPressChange(true);
       }}
-      onPointerUp={(e) => {
+      onPointerUp={() => {
         setIsPressed(false);
         onPressChange(false);
       }}
-      onPointerCancel={(e) => {
+      onPointerCancel={() => {
         setIsPressed(false);
         onPressChange(false);
       }}

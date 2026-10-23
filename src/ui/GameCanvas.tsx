@@ -77,8 +77,10 @@ export function GameCanvas() {
         engineRef.current.togglePause();
       }
     };
+    
+    const isMobileTouch = window.matchMedia('(pointer: coarse)').matches;
     const handleWindowBlur = () => {
-      if (engineRef.current && hasStarted && !isGameOver) {
+      if (engineRef.current && hasStarted && !isGameOver && !isMobileTouch) {
         engineRef.current.togglePause();
       }
     };
@@ -385,12 +387,21 @@ export function GameCanvas() {
         </div>
       )}
 
-      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES OTIMIZADOS PARA TOQUE */}
+      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES OTIMIZADOS COM SAFE-AREA */}
       {hasStarted && !isGameOver && !isPaused && (
         <div style={{
-          position: 'absolute', bottom: 15, left: 10, right: 10, 
-          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
-          zIndex: 15, pointerEvents: 'none', userSelect: 'none', boxSizing: 'border-box'
+          position: 'absolute', 
+          bottom: 'max(15px, env(safe-area-inset-bottom, 15px))', 
+          left: 10, 
+          right: 10, 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'flex-end',
+          zIndex: 15, 
+          pointerEvents: 'none', 
+          userSelect: 'none', 
+          boxSizing: 'border-box',
+          paddingBottom: 0
         }}>
           {/* Controles de Direção / Rotação (Esquerda) */}
           <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto' }}>

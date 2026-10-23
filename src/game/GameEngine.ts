@@ -30,9 +30,10 @@ export class GameEngine {
   private currentScore = 0; 
   private highScore = Number(localStorage.getItem('pirate_battle_highscore') || '0');
   private playerHealth = 100;
-  private timeLeft = 60;
   
-  // Relógio seguro: impede que o tempo corra enquanto o jogo está pausado
+  private maxGameTime = 60;
+  private timeLeft = 60;
+  private baseSpawnIntervalMs = 3000;
   private timeAccumulator = 0; 
   
   private gameMap: GameMap;
@@ -51,6 +52,35 @@ export class GameEngine {
     this.audio = new AudioManager();
     this.gameMap = new GameMap();
     this.player = new Player(this.handleShoot.bind(this));
+  }
+
+  // Mapeamento direto e robusto dos controlos táteis para o objeto de inputs do Player
+  public setControl(action: 'forward' | 'left' | 'right' | 'fireFront' | 'fireLeft' | 'fireRight', active: boolean) {
+    if (this.isDestroyed || this.isGameOver || this.isPaused || !this.player) return;
+    
+    const playerInputs = (this.player as any).inputs;
+    if (!playerInputs) return;
+
+    switch (action) {
+      case 'forward':
+        playerInputs.up = active;
+        break;
+      case 'left':
+        playerInputs.left = active;
+        break;
+      case 'right':
+        playerInputs.right = active;
+        break;
+      case 'fireFront':
+        playerInputs.space = active;
+        break;
+      case 'fireLeft':
+        playerInputs.shift = active;
+        break;
+      case 'fireRight':
+        playerInputs.ctrl = active;
+        break;
+    }
   }
 
   private handleResize = () => {
@@ -146,7 +176,6 @@ export class GameEngine {
     if (this.isGameOver || !this.isInitialized) return;
     this.isPaused = !this.isPaused;
     
-    // Bloqueia/Desbloqueia controlos do jogador
     this.player.isLocked = this.isPaused;
 
     if (this.isPaused) {
@@ -162,6 +191,8 @@ export class GameEngine {
 
   public async init(
     container: HTMLElement,
+    gameTime: number = 60,
+    spawnTimeSec: number = 3,
     onGameStateChange: (
       score: number,
       health: number,
@@ -172,6 +203,12 @@ export class GameEngine {
     ) => void
   ) {
     if (this.isInitialized) return;
+    
+    this.maxGameTime = gameTime;
+    this.timeLeft = gameTime;
+    this.baseSpawnIntervalMs = spawnTimeSec * 1000;
+    this.spawnInterval = this.baseSpawnIntervalMs;
+
     this.onGameStateChange = onGameStateChange;
     this.notifyState(); 
 
@@ -218,15 +255,25 @@ export class GameEngine {
     });
   }
 
-  public restart() {
+  public restart(gameTime?: number, spawnTimeSec?: number) {
+    if (gameTime !== undefined) {
+      this.maxGameTime = gameTime;
+      this.timeLeft = gameTime;
+    } else {
+      this.timeLeft = this.maxGameTime;
+    }
+
+    if (spawnTimeSec !== undefined) {
+      this.baseSpawnIntervalMs = spawnTimeSec * 1000;
+      this.spawnInterval = this.baseSpawnIntervalMs;
+    }
+
     this.currentScore = 0;
     this.playerHealth = 100;
-    this.timeLeft = 60;
     this.isGameOver = false;
     this.isPaused = false;
     this.timeAccumulator = 0;
     this.lastEnemySpawn = Date.now();
-    this.spawnInterval = 3000; 
 
     this.audio.stopHealthLow();
 
@@ -289,15 +336,14 @@ export class GameEngine {
   private gameLoop(delta: number) {
     if (!this.isInitialized || this.isGameOver || this.isPaused) return; 
     
-    // Atualização de tempo blindada contra pausas e perdas de foco (Playwright Test 7)
     this.timeAccumulator += this.app.ticker.deltaMS;
     
     if (this.timeAccumulator >= 1000) {
       this.timeLeft -= 1;
       this.timeAccumulator -= 1000;
       
-      const elapsed = 60 - this.timeLeft;
-      this.spawnInterval = Math.max(600, 3000 - (elapsed * 40));
+      const elapsed = this.maxGameTime - this.timeLeft;
+      this.spawnInterval = Math.max(600, this.baseSpawnIntervalMs - (elapsed * 40));
 
       if (this.timeLeft <= 10 && this.timeLeft > 0) {
         this.audio.playTimeWarning();

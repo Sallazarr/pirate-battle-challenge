@@ -2,12 +2,14 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GameCanvas } from './ui/GameCanvas';
-import './index.css'; // <-- Importante para bloquear o scroll!
+import './index.css'; // Mantém o reset de CSS para evitar o scroll
 
 const queryClient = new QueryClient();
 
 async function enableMocking() {
   const { worker } = await import('./mocks/browser');
+  
+
   return worker.start();
 }
 

@@ -16,7 +16,7 @@ async function enableMocking() {
   const { worker } = await import('./mocks/browser');
   
 
-  return worker.start();
+  return worker.start({ onUnhandledFrame: 'bypass' });
 }
 
 const isE2EMode = isE2ERuntimeEnabled();

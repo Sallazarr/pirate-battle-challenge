@@ -31,7 +31,7 @@ export function MainMenu({ playerName, isLoading, assetProgress, assetLoadError,
   return (
     <div data-testid="main-menu" style={{
       position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-      backgroundImage: 'url(/assets/ui_scene_background.jpg)', backgroundSize: 'cover', backgroundPosition: 'center',
+      backgroundColor: '#001a33',
       zIndex: 30, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '10px', boxSizing: 'border-box',
     }}>
       <div style={panelStyle}>
@@ -50,7 +50,7 @@ export function MainMenu({ playerName, isLoading, assetProgress, assetLoadError,
         <div style={{ height: '15px' }} />
         <MenuButton text="OPTIONS" onClick={onOptions} type="primary" />
         <div style={{ margin: '20px 0 10px 0', opacity: 0.9 }}>
-          <img src="/assets/png/default/ships/ship_player.png" alt="Ship" style={{ width: '45px', filter: 'drop-shadow(0 5px 5px rgba(0,0,0,0.5))' }} onError={(event) => { event.currentTarget.style.display = 'none'; }} />
+          <img src="/assets/png/default/ships/ship_2.png" alt="Ship" style={{ width: '45px', filter: 'drop-shadow(0 5px 5px rgba(0,0,0,0.5))' }} />
         </div>
         <p style={{ fontSize: '0.8rem', color: '#e2e8f0', marginBottom: '20px', textShadow: '1px 1px 2px #000', fontFamily: 'monospace' }}>
           Navigate the islands. Survive the battle.

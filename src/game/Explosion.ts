@@ -5,6 +5,7 @@ export class Explosion {
   public sprite: Sprite;
   public isDead = false;
   private type: number = 1;
+  private texturesReady = false;
 
   constructor(x: number, y: number, type?: number) {
     this.sprite = new Sprite();
@@ -14,10 +15,13 @@ export class Explosion {
 
   public async init() {
     try {
-      const texture = await Assets.load(`/assets/png/default/effects/explosion_${this.type}.png`);
-      this.sprite.texture = texture;
+      const textures = await Promise.all(
+        [1, 2, 3].map((type) => Assets.load(`/assets/png/default/effects/explosion_${type}.png`)),
+      );
+      this.sprite.texture = textures[this.type - 1];
+      this.texturesReady = true;
     } catch (e) {
-      console.warn(`Textura explosion_${this.type}.png não encontrada:`, e);
+      console.warn('Texturas de explosão não foram carregadas:', e);
     }
   }
 
@@ -27,10 +31,10 @@ export class Explosion {
     
     this.type = type || (Math.floor(random() * 2) + 1);
     
-    import('pixi.js').then(({ Assets }) => {
-      const tex = Assets.get(`/assets/png/default/effects/explosion_${this.type}.png`);
-      if (tex) this.sprite.texture = tex;
-    });
+    if (this.texturesReady) {
+      const texture = Assets.get(`/assets/png/default/effects/explosion_${this.type}.png`);
+      if (texture) this.sprite.texture = texture;
+    }
 
     this.sprite.scale.set(0.3);
     this.sprite.alpha = 1;

@@ -1,2 +1,0 @@
-{"type":"receive","time":1792792220808.9958,"opcode":1,"data":"{\"type\":\"connected\"}"}
-{"type":"receive","time":1792792220818.491,"opcode":1,"data":"{\"type\":\"full-reload\",\"path\":\"/artifacts/playwright-report/index.html\"}"}

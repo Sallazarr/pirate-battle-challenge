@@ -1,35 +1,94 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api/client';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GameEngine } from '../game/GameEngine';
+import { configurationKey, createMatchConfiguration } from '../game/gameConfig';
+import type { GameConfiguration } from '../game/gameConfig';
+import type { MatchListView, MatchRecord, PendingMatch } from '../api/scoreTypes';
+import { isE2ERuntimeEnabled } from '../game/e2e';
+import { useMatchPage, useSubmitMatch } from './hooks/useMatchRecords';
 
 const GAME_FONT = 'monospace';
 
-interface ScoreRecord {
-  id: string;
-  score: number;
-  date: string;
-  reason: string;
-  playerName?: string;
-  isFixture?: boolean;
-}
-
-interface StoredResult {
-  score: number;
+type StoredResult = MatchRecord & {
   health: number;
-  reason: string;
-  playerName: string;
-  date: string;
-}
-
-interface PendingScore {
-  idempotencyKey: string;
-  record: { score: number; reason: string; playerName: string };
-}
+  submissionStatus?: 'pending' | 'saved' | 'failed';
+};
 
 const RESULT_STORAGE_KEY = 'pirate_battle_last_result';
 const PENDING_SCORE_KEY = 'pirate_battle_pending_score';
-const PAGE_SIZE = 5;
+const PLAYER_ID_STORAGE_KEY = 'pirate_battle_player_id';
+const PAGE_SIZE = 10;
+const ALLOWED_GAME_TIMES = [60, 90, 120, 150, 180];
+const ALLOWED_SPAWN_TIMES = [2, 3, 4, 5];
+
+function getStoredOption(key: string, allowedValues: number[], fallback: number): number {
+  const value = Number(localStorage.getItem(key));
+  return allowedValues.includes(value) ? value : fallback;
+}
+
+function useDialogAccessibility(
+  isOpen: boolean,
+  dialogRef: React.RefObject<HTMLElement | null>,
+  onClose: () => void,
+  closeOnEscape = true,
+) {
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen || !dialogRef.current) return;
+    const dialog = dialogRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const getFocusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    ));
+    getFocusable()[0]?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' || event.key === 'Tab') event.stopPropagation();
+      if (event.key === 'Escape' && closeOnEscape) {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [isOpen, closeOnEscape, dialogRef]);
+}
+
+function getPlayerId(): string {
+  const existing = localStorage.getItem(PLAYER_ID_STORAGE_KEY);
+  if (existing) return existing;
+  const playerId = globalThis.crypto.randomUUID();
+  localStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId);
+  return playerId;
+}
+
+function updateStoredResult(update: Partial<StoredResult>) {
+  const result = readStoredJson<StoredResult>(RESULT_STORAGE_KEY);
+  if (result) localStorage.setItem(RESULT_STORAGE_KEY, JSON.stringify({ ...result, ...update }));
+}
 
 function readStoredJson<T>(key: string): T | null {
   try {
@@ -41,32 +100,53 @@ function readStoredJson<T>(key: string): T | null {
 }
 
 export function GameCanvas() {
-  const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<GameEngine | null>(null);
-  const gameOverFiredRef = useRef(false); 
+  const gameOverFiredRef = useRef(false);
 
   const [hasStarted, setHasStarted] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [showRankingModal, setShowRankingModal] = useState(false);
+  const [activeScoresView, setActiveScoresView] = useState<MatchListView | null>(null);
+  const optionsDialogRef = useRef<HTMLDivElement>(null);
+  const rankingDialogRef = useRef<HTMLDivElement>(null);
+  const historyDialogRef = useRef<HTMLDivElement>(null);
+  const pauseDialogRef = useRef<HTMLDivElement>(null);
+  const resultDialogRef = useRef<HTMLDivElement>(null);
   const [rankingPage, setRankingPage] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [savedResult, setSavedResult] = useState<StoredResult | null>(() => readStoredJson<StoredResult>(RESULT_STORAGE_KEY));
-  const [pendingScore, setPendingScore] = useState<PendingScore | null>(() => readStoredJson<PendingScore>(PENDING_SCORE_KEY));
-  const isE2EMode = (import.meta.env.DEV || import.meta.env.MODE === 'e2e') && new URLSearchParams(window.location.search).get('e2e') === '1';
+  const [pendingScore, setPendingScore] = useState<PendingMatch | null>(() => readStoredJson<PendingMatch>(PENDING_SCORE_KEY));
+  const pendingScoreOnMountRef = useRef(pendingScore);
+  const pendingScoreSubmittedRef = useRef(false);
+  const isE2EMode = isE2ERuntimeEnabled();
   const [isLoadingGame, setIsLoadingGame] = useState(false);
+  const [assetProgress, setAssetProgress] = useState(0);
   const [assetLoadError, setAssetLoadError] = useState(false);
 
   const [playerName, setPlayerName] = useState<string>(() => {
     return localStorage.getItem('pirate_battle_playername') || 'Captain Jack';
   });
   const [gameTime, setGameTime] = useState<number>(() => {
-    return Number(localStorage.getItem('pirate_battle_gametime') || '60');
+    return getStoredOption('pirate_battle_gametime', ALLOWED_GAME_TIMES, 60);
   });
   const [spawnTime, setSpawnTime] = useState<number>(() => {
-    return Number(localStorage.getItem('pirate_battle_spawntime') || '3');
+    return getStoredOption('pirate_battle_spawntime', ALLOWED_SPAWN_TIMES, 3);
   });
+  const [playerId] = useState(getPlayerId);
+  const playerNameRef = useRef(playerName);
+  useEffect(() => {
+    playerNameRef.current = playerName;
+  }, [playerName]);
+  const activeConfiguration = useMemo(
+    () => createMatchConfiguration(gameTime, spawnTime),
+    [gameTime, spawnTime],
+  );
+  const activeConfigurationRef = useRef<GameConfiguration>(activeConfiguration);
+  useEffect(() => {
+    activeConfigurationRef.current = activeConfiguration;
+  }, [activeConfiguration]);
 
   const [score, setScore] = useState(0);
   const [, setHighScore] = useState<number>(() => {
@@ -77,41 +157,40 @@ export function GameCanvas() {
   const [isGameOver, setIsGameOver] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
 
-  const { data: scores = [], refetch, isFetching: isFetchingScores, isError: isScoresError } = useQuery<ScoreRecord[]>({
-    queryKey: ['scores'],
-    queryFn: async ({ signal }) => {
-      const response = await apiClient.get('/api/scores', { signal });
-      return Array.isArray(response.data) ? response.data : [];
-    },
-    initialData: [],
+  const selectedScoresPage = activeScoresView === 'history' ? historyPage : rankingPage;
+  const matchConfigurationKey = configurationKey(activeConfiguration);
+  const { data: scorePage, refetch, isLoading: isLoadingScores, isFetching: isFetchingScores, isError: isScoresError } = useMatchPage({
+    view: activeScoresView,
+    page: selectedScoresPage,
+    pageSize: PAGE_SIZE,
+    playerId,
+    playerName,
+    configuration: matchConfigurationKey,
   });
-
-  const { mutate: submitScore, isPending, isSuccess, isError: isSubmissionError } = useMutation({
-    mutationFn: async (pending: PendingScore) => {
-      const response = await apiClient.post('/api/scores', pending.record, {
-        headers: { 'Idempotency-Key': pending.idempotencyKey },
-        timeout: isE2EMode ? 700 : 10_000,
-      });
-      return response.data;
-    },
-    retry: 1,
-    retryDelay: 250,
-    onSuccess: (_data, completedPending) => {
-      const currentPending = readStoredJson<PendingScore>(PENDING_SCORE_KEY);
+  const updateSubmissionStatus = (pending: PendingMatch, status: 'saved' | 'failed') => {
+    const result = readStoredJson<StoredResult>(RESULT_STORAGE_KEY);
+    if (result?.id !== pending.record.id) return;
+    updateStoredResult({ submissionStatus: status });
+    setSavedResult(readStoredJson<StoredResult>(RESULT_STORAGE_KEY));
+  };
+  const { mutate: submitScore, isPending, isSuccess, isError: isSubmissionError } = useSubmitMatch({
+    isE2E: isE2EMode,
+    onSuccess: (completedPending) => {
+      const currentPending = readStoredJson<PendingMatch>(PENDING_SCORE_KEY);
       if (currentPending?.idempotencyKey === completedPending.idempotencyKey) {
         localStorage.removeItem(PENDING_SCORE_KEY);
         setPendingScore(null);
       }
-      queryClient.invalidateQueries({ queryKey: ['scores'] });
-      refetch();
-    }
+      updateSubmissionStatus(completedPending, 'saved');
+    },
+    onError: (failedPending) => updateSubmissionStatus(failedPending, 'failed'),
   });
 
   useEffect(() => {
-    if (pendingScore) submitScore(pendingScore);
-  // A stored outbox entry is intentionally submitted once when the UI mounts.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (pendingScoreSubmittedRef.current || !pendingScoreOnMountRef.current) return;
+    pendingScoreSubmittedRef.current = true;
+    submitScore(pendingScoreOnMountRef.current);
+  }, [submitScore]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -126,7 +205,7 @@ export function GameCanvas() {
         engineRef.current.pause();
       }
     };
-    
+
     const isMobileTouch = window.matchMedia('(pointer: coarse)').matches;
     const handleWindowBlur = () => {
       if (engineRef.current && hasStarted && !isGameOver && !isMobileTouch) {
@@ -146,18 +225,25 @@ export function GameCanvas() {
   }, [hasStarted, isGameOver]);
 
   const handleSaveOptions = (newTime: number, newSpawn: number, newName: string) => {
+    const normalizedName = newName.trim().slice(0, 15);
+    if (!ALLOWED_GAME_TIMES.includes(newTime) || !ALLOWED_SPAWN_TIMES.includes(newSpawn) || !normalizedName) return;
     setGameTime(newTime);
     setSpawnTime(newSpawn);
-    setPlayerName(newName);
+    setPlayerName(normalizedName);
     setTimeLeft(newTime);
-    localStorage.setItem('pirate_battle_gametime', newTime.toString());
-    localStorage.setItem('pirate_battle_spawntime', newSpawn.toString());
-    localStorage.setItem('pirate_battle_playername', newName);
+    localStorage.setItem('pirate_battle_gametime', String(newTime));
+    localStorage.setItem('pirate_battle_spawntime', String(newSpawn));
+    localStorage.setItem('pirate_battle_playername', normalizedName);
+    setRankingPage(0);
+    setHistoryPage(0);
     setShowOptionsModal(false);
   };
 
   const startGame = async () => {
+    const matchConfiguration = createMatchConfiguration(gameTime, spawnTime);
+    activeConfigurationRef.current = matchConfiguration;
     setAssetLoadError(false);
+    setAssetProgress(0);
     setIsLoadingGame(true);
     setIsGameOver(false);
     setIsPaused(false);
@@ -171,10 +257,10 @@ export function GameCanvas() {
     }
 
     if (!engineRef.current) {
-      const engine = new GameEngine();
+      const engine = new GameEngine(matchConfiguration);
       engineRef.current = engine;
       try {
-        await engine.init(container, gameTime, spawnTime, (newScore, newHealth, newTime, gameOverFlag, pausedFlag, currentHighScore) => {
+        await engine.init(container, (newScore, newHealth, newTime, gameOverFlag, pausedFlag, currentHighScore, durationSeconds) => {
           setScore(newScore);
           setHealth(newHealth);
           setTimeLeft(newTime);
@@ -185,10 +271,30 @@ export function GameCanvas() {
           if (gameOverFlag && !gameOverFiredRef.current) {
             gameOverFiredRef.current = true;
             const reason = newHealth <= 0 ? 'ship_destroyed' : 'time_out';
-            const result = { score: newScore, health: newHealth, reason, playerName, date: new Date().toISOString() };
-            const pending = {
-              idempotencyKey: globalThis.crypto.randomUUID(),
-              record: { score: newScore, reason, playerName },
+            const matchId = globalThis.crypto.randomUUID();
+            const result: StoredResult = {
+              id: matchId,
+              playerId,
+              playerName: playerNameRef.current,
+              score: newScore,
+              health: newHealth,
+              reason,
+              date: new Date().toISOString(),
+              durationSeconds,
+              configuration: activeConfigurationRef.current,
+              submissionStatus: 'pending',
+            };
+            const pending: PendingMatch = {
+              idempotencyKey: matchId,
+              record: {
+                id: matchId,
+                playerId,
+                playerName: playerNameRef.current,
+                score: newScore,
+                durationSeconds,
+                reason,
+                configuration: activeConfigurationRef.current,
+              },
             };
             localStorage.setItem(RESULT_STORAGE_KEY, JSON.stringify(result));
             localStorage.setItem(PENDING_SCORE_KEY, JSON.stringify(pending));
@@ -196,9 +302,9 @@ export function GameCanvas() {
             setPendingScore(pending);
             submitScore(pending);
           }
-        });
+        }, setAssetProgress);
         setHasStarted(true);
-      } catch (error) {
+      } catch {
         engine.destroy();
         if (engineRef.current === engine) engineRef.current = null;
         setAssetLoadError(true);
@@ -207,7 +313,7 @@ export function GameCanvas() {
       }
     } else {
       gameOverFiredRef.current = false;
-      engineRef.current.restart(gameTime, spawnTime);
+      engineRef.current.restart(matchConfiguration);
       setHasStarted(true);
       setIsLoadingGame(false);
     }
@@ -216,7 +322,8 @@ export function GameCanvas() {
   const handleRestart = () => {
     if (engineRef.current) {
       gameOverFiredRef.current = false;
-      engineRef.current.restart(gameTime, spawnTime);
+      activeConfigurationRef.current = createMatchConfiguration(gameTime, spawnTime);
+      engineRef.current.restart(activeConfigurationRef.current);
       setSavedResult(null);
       localStorage.removeItem(RESULT_STORAGE_KEY);
     } else {
@@ -238,7 +345,6 @@ export function GameCanvas() {
     setIsPaused(false);
     setSavedResult(null);
     localStorage.removeItem(RESULT_STORAGE_KEY);
-    refetch();
   };
 
   const handleTogglePause = () => {
@@ -247,21 +353,34 @@ export function GameCanvas() {
     }
   };
 
-  const safeScores = Array.isArray(scores) ? scores : [];
-  const myHistory = safeScores.filter(s => !s.isFixture);
-  const mockMatches = safeScores.filter(s => s.isFixture);
-  const myMatches = safeScores.filter(s => !s.isFixture);
-  const myBestMatch = myMatches.length > 0 
-    ? [...myMatches].sort((a, b) => b.score - a.score)[0] 
-    : null;
-
-  const rankingPool = [...mockMatches];
-  if (myBestMatch) rankingPool.push(myBestMatch);
-  const topScores = rankingPool.sort((a, b) => b.score - a.score);
-  const visibleRanking = topScores.slice(rankingPage * PAGE_SIZE, (rankingPage + 1) * PAGE_SIZE);
-  const visibleHistory = myHistory.slice(historyPage * PAGE_SIZE, (historyPage + 1) * PAGE_SIZE);
-  const resultForDisplay = savedResult ?? { score, health, reason: health <= 0 ? 'ship_destroyed' : 'time_out', playerName, date: new Date().toISOString() };
+  const pageItems = scorePage?.items ?? [];
+  const totalScores = scorePage?.total ?? 0;
+  const resultForDisplay = savedResult ?? {
+    score,
+    health,
+    reason: health <= 0 ? 'ship_destroyed' : 'time_out',
+    playerName,
+    date: new Date().toISOString(),
+    durationSeconds: activeConfiguration.sessionSeconds - timeLeft,
+    submissionStatus: 'pending' as const,
+  };
+  const resultConfiguration = savedResult?.configuration ?? activeConfiguration;
+  const resultDurationSeconds = resultForDisplay.durationSeconds ?? 0;
+  const resultMinutes = Math.floor(resultDurationSeconds / 60).toString().padStart(2, '0');
+  const resultSeconds = (resultDurationSeconds % 60).toString().padStart(2, '0');
+  const submissionStatus = isPending
+    ? 'pending'
+    : isSubmissionError || resultForDisplay.submissionStatus === 'failed'
+      ? 'failed'
+      : isSuccess || resultForDisplay.submissionStatus === 'saved'
+        ? 'saved'
+        : 'pending';
   const showResult = isGameOver || (!hasStarted && savedResult !== null);
+  useDialogAccessibility(showOptionsModal, optionsDialogRef, () => setShowOptionsModal(false));
+  useDialogAccessibility(showRankingModal, rankingDialogRef, () => { setShowRankingModal(false); setActiveScoresView(null); });
+  useDialogAccessibility(showHistoryModal, historyDialogRef, () => { setShowHistoryModal(false); setActiveScoresView(null); });
+  useDialogAccessibility(isPaused, pauseDialogRef, handleTogglePause);
+  useDialogAccessibility(showResult, resultDialogRef, () => undefined, false);
 
   const panelImageStyle: React.CSSProperties = {
     backgroundImage: 'url(/assets/png/default/ui/menu/panel_menu.png)',
@@ -275,49 +394,22 @@ export function GameCanvas() {
 
   return (
     <div data-testid="app-surface" style={{ position: 'relative', width: '100vw', height: '100dvh', overflow: 'hidden', backgroundColor: '#001a33' }}>
-      
+
       {!hasStarted && savedResult === null && (
-        <div data-testid="main-menu" style={{
-          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-          backgroundImage: 'url(/assets/ui_scene_background.jpg)',
-          backgroundSize: 'cover', backgroundPosition: 'center',
-          zIndex: 30, display: 'flex', justifyContent: 'center', alignItems: 'center',
-          padding: '10px', boxSizing: 'border-box'
-        }}>
-          <div style={panelImageStyle}>
-            <img 
-              src="/assets/png/default/ui/menu/title_pirate_battle.png" 
-              alt="Pirate Battle" 
-              style={{ width: '85%', marginBottom: '15px' }} 
-            />
-            
-            <p style={{ fontSize: '0.9rem', color: '#fff', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '25px', textShadow: '1px 1px 2px #000', fontFamily: GAME_FONT }}>
-              Welcome, <span style={{ color: '#fbe29f' }}>{playerName}</span>
-            </p>
-
-            <MenuButton text={assetLoadError ? 'RETRY' : isLoadingGame ? 'LOADING...' : 'PLAY'} onClick={startGame} type="primary" disabled={isLoadingGame} />
-            {assetLoadError && <p role="alert" data-testid="asset-load-error" style={{ color: '#ffb4a2', fontFamily: GAME_FONT }}>Some game assets failed to load. Retry?</p>}
-            <div style={{ height: '15px' }} />
-            <MenuButton text="OPTIONS" onClick={() => setShowOptionsModal(true)} type="primary" />
-
-            <div style={{ margin: '20px 0 10px 0', opacity: 0.9 }}>
-              <img src="/assets/png/default/ships/ship_player.png" alt="Ship" style={{ width: '45px', filter: 'drop-shadow(0 5px 5px rgba(0,0,0,0.5))' }} onError={(e) => e.currentTarget.style.display = 'none'} />
-            </div>
-
-            <p style={{ fontSize: '0.8rem', color: '#e2e8f0', marginBottom: '20px', textShadow: '1px 1px 2px #000', fontFamily: GAME_FONT }}>
-              Navigate the islands. Survive the battle.
-            </p>
-
-            <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', width: '100%', flexWrap: 'wrap' }}>
-              <MenuButton text="RANKING" onClick={() => { setRankingPage(0); setShowRankingModal(true); }} type="secondary" />
-              <MenuButton text="HISTORY" onClick={() => { setHistoryPage(0); setShowHistoryModal(true); }} type="secondary" />
-            </div>
-          </div>
-        </div>
+        <MainMenu
+          playerName={playerName}
+          isLoading={isLoadingGame}
+          assetLoadError={assetLoadError}
+          assetProgress={assetProgress}
+          onPlay={startGame}
+          onOptions={() => setShowOptionsModal(true)}
+          onRanking={() => { setRankingPage(0); setActiveScoresView('ranking'); setShowRankingModal(true); }}
+          onHistory={() => { setHistoryPage(0); setActiveScoresView('history'); setShowHistoryModal(true); }}
+        />
       )}
-
       {showOptionsModal && (
-        <OptionsModal 
+        <OptionsModal
+          dialogRef={optionsDialogRef}
           initialGameTime={gameTime}
           initialSpawnTime={spawnTime}
           initialPlayerName={playerName}
@@ -326,93 +418,28 @@ export function GameCanvas() {
         />
       )}
 
-      {showRankingModal && (
-        <div data-testid="ranking-modal" role="dialog" aria-label="Ranking" style={{
-          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-          backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
-          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
-        }}>
-          <div style={{ ...panelImageStyle, minHeight: '550px' }}>
-            <h2 style={{ textAlign: 'center', color: '#fbe29f', marginTop: 0, textShadow: '2px 2px 0 #3e1d04', fontFamily: GAME_FONT, fontSize: '1.8rem' }}>
-              🏆 TOP CAPTAINS
-            </h2>
-            
-            <div style={{ width: '100%', flex: 1, overflowY: 'auto', marginBottom: '20px', fontFamily: GAME_FONT, color: '#fff' }}>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                {isFetchingScores && safeScores.length === 0 && <li data-testid="scores-loading">Loading scores...</li>}
-                {isScoresError && <li role="alert">Could not load scores. <button onClick={() => refetch()}>RETRY</button></li>}
-                {!isFetchingScores && !isScoresError && topScores.length === 0 && <li data-testid="ranking-empty">No scores found.</li>}
-                {visibleRanking.map((match, idx) => {
-                  const isMe = !match.isFixture;
-                  const displayTitle = isMe ? (match.playerName || playerName) : match.playerName;
-
-                  return (
-                    <li key={match.id} style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', fontSize: '1rem',
-                      borderBottom: '1px solid rgba(255,255,255,0.1)'
-                    }}>
-                      <span style={{ display: 'flex', alignItems: 'center' }}>
-                        <span style={{ display: 'inline-block', minWidth: '45px', marginRight: '5px' }}>
-                          {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
-                        </span> 
-                        <span style={{ color: isMe ? '#fbe29f' : '#fff', fontWeight: isMe ? 'bold' : 'normal' }}>
-                          {displayTitle}
-                        </span>
-                        {isMe && (
-                          <span style={{ fontSize: '0.75rem', backgroundColor: '#e69e35', color: '#3e1d04', padding: '2px 6px', borderRadius: '4px', marginLeft: '8px', fontWeight: 'bold' }}>YOU</span>
-                        )}
-                      </span>
-                      <span style={{ color: '#fbe29f', fontWeight: 'bold' }}>{match.score} pts</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-            {topScores.length > PAGE_SIZE && <Pagination page={rankingPage} pages={Math.ceil(topScores.length / PAGE_SIZE)} onPageChange={setRankingPage} label="ranking" />}
-            <MenuButton text="CLOSE" onClick={() => setShowRankingModal(false)} type="primary" />
-          </div>
-        </div>
+      {(showRankingModal || showHistoryModal) && (
+        <ScoresDialog
+          view={showRankingModal ? 'ranking' : 'history'}
+          dialogRef={showRankingModal ? rankingDialogRef : historyDialogRef}
+          items={pageItems}
+          total={totalScores}
+          page={showRankingModal ? rankingPage : historyPage}
+          pageSize={PAGE_SIZE}
+          playerName={playerName}
+          isLoading={isLoadingScores}
+          isFetching={isFetchingScores}
+          isError={isScoresError}
+          onRetry={() => refetch()}
+          onPageChange={showRankingModal ? setRankingPage : setHistoryPage}
+          onClose={() => {
+            setShowRankingModal(false);
+            setShowHistoryModal(false);
+            setActiveScoresView(null);
+          }}
+        />
       )}
 
-      {showHistoryModal && (
-        <div data-testid="history-modal" role="dialog" aria-label="Match History" style={{
-          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-          backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
-          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-          backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
-        }}>
-          <div style={{ ...panelImageStyle, minHeight: '550px' }}>
-            <h2 style={{ textAlign: 'center', color: '#fbe29f', marginTop: 0, textShadow: '2px 2px 0 #3e1d04', fontFamily: GAME_FONT, fontSize: '1.8rem' }}>
-              📜 MATCH HISTORY
-            </h2>
-            
-            <div style={{ width: '100%', flex: 1, overflowY: 'auto', marginBottom: '20px', fontFamily: GAME_FONT, color: '#fff' }}>
-              {isFetchingScores && safeScores.length === 0 ? <p data-testid="scores-loading">Loading matches...</p> : isScoresError ? <p role="alert">Could not load matches. <button onClick={() => refetch()}>RETRY</button></p> : myHistory.length === 0 ? (
-                <p style={{ textAlign: 'center', color: '#aaa', marginTop: '20px', fontSize: '1rem' }}>No battles recorded for {playerName}.</p>
-              ) : (
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                  {visibleHistory.map((match, idx) => (
-                    <li key={match.id} style={{
-                      display: 'flex', justifyContent: 'space-between', padding: '12px 0', fontSize: '1rem',
-                      borderBottom: '1px solid rgba(255,255,255,0.1)'
-                    }}>
-                      <span>#{idx + 1} — Score: <b style={{ color: '#fbe29f' }}>{match.score}</b></span>
-                      <span style={{ color: match.reason === 'ship_destroyed' ? '#ff6b6b' : '#69b3a2', fontSize: '0.9rem' }}>
-                        {match.reason === 'ship_destroyed' ? 'DEFEATED' : 'TIME UP'}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            {myHistory.length > PAGE_SIZE && <Pagination page={historyPage} pages={Math.ceil(myHistory.length / PAGE_SIZE)} onPageChange={setHistoryPage} label="history" />}
-            <MenuButton text="CLOSE" onClick={() => setShowHistoryModal(false)} type="primary" />
-          </div>
-        </div>
-      )}
-
-      {/* HUD SUPERIOR EM JOGO (Adaptado para mobile) */}
       {hasStarted && (
         <div style={{
           position: 'absolute', top: 10, left: 10, right: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
@@ -427,12 +454,12 @@ export function GameCanvas() {
             <div style={{ width: '110px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#fff', fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '2px' }}>
                 <span>HEALTH</span>
-                <span>{health}/100</span>
+                <span role="status" aria-label={`Health ${health} of 100`}>{health}/100</span>
               </div>
               <div style={{ width: '100%', height: '10px', backgroundColor: '#1e293b', borderRadius: '5px', overflow: 'hidden', border: '1px solid #475569' }}>
-                <div style={{ 
-                  width: `${Math.max(0, Math.min(100, health))}%`, 
-                  height: '100%', 
+                <div style={{
+                  width: `${Math.max(0, Math.min(100, health))}%`,
+                  height: '100%',
                   backgroundColor: health <= 30 ? '#ef4444' : '#22c55e',
                   transition: 'width 0.3s ease'
                 }} />
@@ -449,7 +476,7 @@ export function GameCanvas() {
               <span style={{ fontSize: '1rem' }}>🏆</span>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: '0.6rem', color: '#94a3b8', textTransform: 'uppercase' }}>Score</span>
-                <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#fbe29f' }}>{score}</span>
+                <span role="status" aria-label={`Score ${score}`} style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#fbe29f' }}>{score}</span>
               </div>
             </div>
 
@@ -461,7 +488,7 @@ export function GameCanvas() {
               <span style={{ fontSize: '1rem' }}>⏱️</span>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: '0.6rem', color: '#94a3b8', textTransform: 'uppercase' }}>Time</span>
-                <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: timeLeft <= 10 ? '#ef4444' : '#fbe29f' }}>{timeLeft}s</span>
+                <span role="timer" aria-label={`${timeLeft} seconds remaining`} style={{ fontSize: '0.95rem', fontWeight: 'bold', color: timeLeft <= 10 ? '#ef4444' : '#fbe29f' }}>{timeLeft}s</span>
               </div>
             </div>
 
@@ -484,23 +511,23 @@ export function GameCanvas() {
         </div>
       )}
 
-      {/* BOTÕES TÁTEIS / MOBILE FLUTUANTES OTIMIZADOS COM SAFE-AREA */}
+
       {hasStarted && !isGameOver && !isPaused && (
         <div style={{
-          position: 'absolute', 
-          bottom: 'max(15px, env(safe-area-inset-bottom, 15px))', 
-          left: 10, 
-          right: 10, 
-          display: 'flex', 
-          justifyContent: 'space-between', 
+          position: 'absolute',
+          bottom: 'max(15px, env(safe-area-inset-bottom, 15px))',
+          left: 10,
+          right: 10,
+          display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'flex-end',
-          zIndex: 15, 
-          pointerEvents: 'none', 
-          userSelect: 'none', 
+          zIndex: 15,
+          pointerEvents: 'none',
+          userSelect: 'none',
           boxSizing: 'border-box',
           paddingBottom: 0
         }}>
-          {/* Controles de Direção / Rotação (Esquerda) */}
+
           <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto' }}>
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_turn_left.png"
@@ -519,7 +546,7 @@ export function GameCanvas() {
             />
           </div>
 
-          {/* Controles de Disparo: Esquerda, Frente e Direita (Direita) */}
+
           <div style={{ display: 'flex', gap: '8px', pointerEvents: 'auto' }}>
             <MobileControlButton
               icon="/assets/png/default/ui/controls/icon_fire_left.png"
@@ -541,7 +568,7 @@ export function GameCanvas() {
       )}
 
       {isPaused && (
-        <div style={{
+        <div ref={pauseDialogRef} role="dialog" aria-modal="true" aria-label="Game paused" style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.65)', zIndex: 20,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
@@ -550,7 +577,7 @@ export function GameCanvas() {
           <div style={{ ...panelImageStyle, minHeight: 'auto', paddingBottom: '40px' }}>
             <h1 style={{ fontSize: '2.5rem', color: '#fbe29f', textShadow: '2px 2px 0 #3e1d04', margin: '0 0 10px 0', fontFamily: GAME_FONT }}>PAUSED</h1>
             <p style={{ color: '#fff', marginBottom: '30px', fontFamily: GAME_FONT, fontSize: '1rem' }}>Ready when you are.</p>
-            
+
             <MenuButton text="RESUME" onClick={handleTogglePause} type="primary" />
             <div style={{ height: '15px' }} />
             <MenuButton text="RESTART" onClick={handleRestart} type="primary" />
@@ -561,7 +588,7 @@ export function GameCanvas() {
       )}
 
       {showResult && (
-        <div data-testid="result-screen" role="dialog" aria-label="Battle result" style={{
+        <div ref={resultDialogRef} data-testid="result-screen" role="dialog" aria-modal="true" aria-label="Battle result" style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(0, 0, 0, 0.8)', zIndex: 20,
           display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
@@ -570,16 +597,18 @@ export function GameCanvas() {
           <div style={{ ...panelImageStyle, minHeight: 'auto', paddingBottom: '40px' }}>
             <h1 style={{ fontSize: '2.5rem', color: '#fbe29f', textShadow: '2px 2px 0 #3e1d04', margin: '0 0 10px 0', fontFamily: GAME_FONT, textAlign: 'center' }}>BATTLE COMPLETE</h1>
             <h2 data-testid="result-score" style={{ fontSize: '4.5rem', margin: '10px 0', color: '#fff', textShadow: '3px 3px 0 #000', fontFamily: GAME_FONT }}>{resultForDisplay.score}</h2>
-            
+
             <p style={{ color: '#aaa', fontSize: '1rem', marginBottom: '25px', fontFamily: GAME_FONT, textTransform: 'uppercase' }}>
-              POINTS • {health <= 0 ? 'DEFEATED' : 'TIME UP'}
+              POINTS · {resultForDisplay.reason === 'ship_destroyed' ? 'DEFEATED' : 'TIME UP'}
             </p>
-            
+            <p data-testid="result-duration" style={{ color: '#fff', fontFamily: GAME_FONT }}>Duration: {resultMinutes}:{resultSeconds}</p>
+            <p data-testid="result-configuration" style={{ color: '#aaa', fontFamily: GAME_FONT }}>Session {resultConfiguration.sessionSeconds}s · Spawn every {resultConfiguration.spawnIntervalSeconds}s</p>
             <div style={{ height: '25px', marginBottom: '15px', fontSize: '1rem', color: '#8ecae6', fontFamily: GAME_FONT }}>
-              {isPending && <span>Saving score... ⏳</span>}
-              {isSuccess && <span style={{ color: '#4CAF50' }}>Score saved! ✅</span>}
+              <span data-testid="result-registration-status" data-status={submissionStatus} style={{ color: submissionStatus === 'saved' ? '#4CAF50' : submissionStatus === 'failed' ? '#ff6b6b' : '#8ecae6' }}>
+                {submissionStatus === 'pending' ? 'Saving score…' : submissionStatus === 'saved' ? 'Score saved!' : 'Score not saved'}
+              </span>
             </div>
-            {isSubmissionError && pendingScore && <button data-testid="retry-score" onClick={() => submitScore(pendingScore)}>RETRY SAVE</button>}
+            {(isSubmissionError || submissionStatus === 'failed') && pendingScore && <button data-testid="retry-score" onClick={() => submitScore(pendingScore)}>RETRY SAVE</button>}
             <MenuButton text="PLAY AGAIN" onClick={handleRestart} type="primary" />
             <div style={{ height: '15px' }} />
             <MenuButton text="MAIN MENU" onClick={handleReturnToMenu} type="primary" />
@@ -592,242 +621,6 @@ export function GameCanvas() {
   );
 }
 
-function Pagination({ page, pages, onPageChange, label }: { page: number; pages: number; onPageChange: (page: number) => void; label: string }) {
-  return (
-    <div data-testid={`${label}-pagination`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '12px', color: '#fff', fontFamily: GAME_FONT }}>
-      <button aria-label={`Previous ${label} page`} disabled={page === 0} onClick={() => onPageChange(Math.max(0, page - 1))}>PREVIOUS</button>
-      <span>{page + 1} / {pages}</span>
-      <button aria-label={`Next ${label} page`} disabled={page >= pages - 1} onClick={() => onPageChange(Math.min(pages - 1, page + 1))}>NEXT</button>
-    </div>
-  );
-}
-
-function MobileControlButton({ icon, onPressChange, title }: { icon: string, onPressChange: (active: boolean) => void, title?: string }) {
-  const [isPressed, setIsPressed] = useState(false);
-
-  const bgImage = isPressed 
-    ? 'url(/assets/png/default/ui/controls/button_round_pressed.png)' 
-    : 'url(/assets/png/default/ui/controls/button_round_normal.png)';
-
-  return (
-    <button
-      aria-label={title}
-      data-testid={title ? `touch-${title.toLowerCase().replaceAll(' ', '-')}` : undefined}
-      onMouseDown={(e) => {
-        e.preventDefault();
-        setIsPressed(true);
-        onPressChange(true);
-      }}
-      onMouseUp={(e) => {
-        e.preventDefault();
-        setIsPressed(false);
-        onPressChange(false);
-      }}
-      onMouseLeave={(e) => {
-        e.preventDefault();
-        if (isPressed) {
-          setIsPressed(false);
-          onPressChange(false);
-        }
-      }}
-      onTouchStart={(e) => {
-        e.preventDefault();
-        setIsPressed(true);
-        onPressChange(true);
-      }}
-      onTouchEnd={(e) => {
-        e.preventDefault();
-        setIsPressed(false);
-        onPressChange(false);
-      }}
-      onTouchCancel={(e) => {
-        e.preventDefault();
-        setIsPressed(false);
-        onPressChange(false);
-      }}
-      style={{
-        backgroundImage: bgImage,
-        backgroundSize: '100% 100%',
-        backgroundRepeat: 'no-repeat',
-        backgroundColor: 'transparent',
-        border: 'none',
-        width: '54px',
-        height: '54px',
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        outline: 'none',
-        position: 'relative',
-        filter: 'drop-shadow(0px 3px 5px rgba(0,0,0,0.6))',
-        transform: isPressed ? 'translateY(2px)' : 'none',
-        pointerEvents: 'auto',
-        touchAction: 'none',
-        WebkitTapHighlightColor: 'transparent',
-        userSelect: 'none'
-      }}
-    >
-      <img 
-        src={icon} 
-        alt="" 
-        style={{ width: '22px', height: '22px', objectFit: 'contain', pointerEvents: 'none', margin: '0 auto' }} 
-        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-      />
-      {title && (
-        <span style={{ fontSize: '0.45rem', color: '#fbe29f', fontFamily: GAME_FONT, fontWeight: 'bold', textShadow: '1px 1px 0 #000', position: 'absolute', bottom: '2px', width: '100%', textAlign: 'center', pointerEvents: 'none' }}>
-          {title}
-        </span>
-      )}
-    </button>
-  );
-}
-
-function OptionsModal({ initialGameTime, initialSpawnTime, initialPlayerName, onSave, onClose }: {
-  initialGameTime: number;
-  initialSpawnTime: number;
-  initialPlayerName: string;
-  onSave: (gameTime: number, spawnTime: number, playerName: string) => void;
-  onClose: () => void;
-}) {
-  const [gameTime, setGameTime] = useState(initialGameTime);
-  const [spawnTime, setSpawnTime] = useState(initialSpawnTime);
-  const [playerName, setPlayerName] = useState(initialPlayerName);
-
-  const allowedGameTimes = [60, 90, 120, 150, 180];
-  const allowedSpawnTimes = [2, 3, 4, 5];
-
-  return (
-        <div data-testid="options-modal" role="dialog" aria-label="Options" style={{
-      position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-      backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 40,
-      display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-      backdropFilter: 'blur(4px)', padding: '15px', boxSizing: 'border-box'
-    }}>
-      <div style={{
-        backgroundImage: 'url(/assets/png/default/ui/menu/panel_menu.png)',
-        backgroundSize: '100% 100%', backgroundRepeat: 'no-repeat',
-        width: '90%', maxWidth: '500px', minHeight: '520px',
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        padding: '50px 40px', boxSizing: 'border-box',
-        filter: 'drop-shadow(0px 15px 25px rgba(0,0,0,0.6))'
-      }}>
-        <h2 style={{ textAlign: 'center', color: '#fbe29f', marginTop: 0, marginBottom: '25px', textShadow: '2px 2px 0 #3e1d04', fontFamily: GAME_FONT, fontSize: '1.8rem' }}>
-          OPTIONS
-        </h2>
-
-        <div style={{ width: '100%', marginBottom: '20px', fontFamily: GAME_FONT }}>
-          <label htmlFor="captain-name" style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
-            Captain Name
-          </label>
-          <input 
-            id="captain-name"
-            type="text" 
-            maxLength={15}
-            required
-            value={playerName}
-            onChange={(e) => setPlayerName(e.target.value)}
-            style={{
-              width: '100%', padding: '12px', fontSize: '1rem', fontWeight: 'bold', textAlign: 'center',
-              backgroundColor: 'rgba(0,0,0,0.4)', color: '#fbe29f',
-              border: '2px solid #aaa', borderRadius: '6px', outline: 'none', textTransform: 'uppercase',
-              boxSizing: 'border-box'
-            }}
-          />
-        </div>
-
-        <div style={{ width: '100%', marginBottom: '20px', fontFamily: GAME_FONT }}>
-          <label htmlFor="session-time" style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
-            Game Session Time
-          </label>
-          <div style={{ display: 'flex', gap: '5px', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-            {allowedGameTimes.map((time) => (
-              <button
-                key={time} onClick={() => setGameTime(time)}
-                aria-pressed={gameTime === time}
-                data-testid={`session-time-${time}`}
-                style={{
-                  flex: 1, padding: '10px 0', fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer',
-                  backgroundColor: gameTime === time ? '#e69e35' : 'rgba(0,0,0,0.4)',
-                  color: gameTime === time ? '#3e1d04' : 'white',
-                  border: gameTime === time ? '2px solid #6b3e1b' : '1px solid #aaa', borderRadius: '6px',
-                  fontFamily: GAME_FONT
-                }}
-              >
-                {time}s
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ width: '100%', marginBottom: '30px', fontFamily: GAME_FONT }}>
-          <label htmlFor="spawn-time" style={{ display: 'block', marginBottom: '8px', color: '#fff', fontSize: '0.9rem', textTransform: 'uppercase', textAlign: 'center' }}>
-            Enemy Spawn Time
-          </label>
-          <div style={{ display: 'flex', gap: '5px', justifyContent: 'space-between' }}>
-            {allowedSpawnTimes.map((spawn) => (
-              <button
-                key={spawn} onClick={() => setSpawnTime(spawn)}
-                aria-pressed={spawnTime === spawn}
-                data-testid={`spawn-time-${spawn}`}
-                style={{
-                  flex: 1, padding: '10px 0', fontSize: '0.9rem', fontWeight: 'bold', cursor: 'pointer',
-                  backgroundColor: spawnTime === spawn ? '#e69e35' : 'rgba(0,0,0,0.4)',
-                  color: spawnTime === spawn ? '#3e1d04' : 'white',
-                  border: spawnTime === spawn ? '2px solid #6b3e1b' : '1px solid #aaa', borderRadius: '6px',
-                  fontFamily: GAME_FONT
-                }}
-              >
-                {spawn}s
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <MenuButton text="SAVE & CLOSE" onClick={() => onSave(gameTime, spawnTime, playerName.trim() || 'Captain Jack')} type="primary" disabled={!playerName.trim()} />
-        <div style={{ height: '10px' }} />
-        <MenuButton text="CANCEL" onClick={onClose} type="secondary" />
-      </div>
-    </div>
-  );
-}
-
-function MenuButton({ onClick, text, type = 'primary', disabled = false }: { onClick: () => void, text: string, type?: 'primary' | 'secondary', disabled?: boolean }) {
-  const [interactionState, setInteractionState] = useState<'normal' | 'hover' | 'pressed'>('normal');
-
-  const getBackgroundImage = () => {
-    if (interactionState === 'pressed') return `url(/assets/png/default/ui/menu/button_${type}_pressed.png)`;
-    if (interactionState === 'hover' && type === 'primary') return `url(/assets/png/default/ui/menu/button_${type}_hover.png)`;
-    return `url(/assets/png/default/ui/menu/button_${type}_normal.png)`;
-  };
-
-  const width = type === 'primary' ? '220px' : '160px';
-  const height = type === 'primary' ? '55px' : '45px';
-  const fontSize = type === 'primary' ? '1.2rem' : '1rem';
-
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      onMouseEnter={() => setInteractionState('hover')}
-      onMouseLeave={() => setInteractionState('normal')}
-      onMouseDown={() => setInteractionState('pressed')}
-      onMouseUp={() => setInteractionState('hover')}
-      style={{
-        backgroundImage: getBackgroundImage(), backgroundSize: '100% 100%', backgroundRepeat: 'no-repeat',
-        backgroundColor: 'transparent', border: 'none', 
-        color: '#fbe29f',
-        fontFamily: GAME_FONT, fontWeight: 'bold', fontSize: fontSize,
-        width: width, height: height, cursor: 'pointer', textTransform: 'uppercase',
-        display: 'flex', justifyContent: 'center', alignItems: 'center', outline: 'none'
-      }}
-    >
-      <span style={{ 
-        transform: interactionState === 'pressed' ? 'translateY(3px)' : 'none',
-        textShadow: '2px 2px 0px #3e1d04, 1px 1px 0px #000'
-      }}>
-        {text}
-      </span>
-    </button>
-  );
-}
+import { MenuButton, MobileControlButton, OptionsModal } from './GameControls';
+import { ScoresDialog } from './ScoresDialog';
+import { MainMenu } from './MainMenu';

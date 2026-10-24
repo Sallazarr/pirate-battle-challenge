@@ -17,7 +17,14 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    launchOptions: { args: ['--enable-precise-memory-info'] },
+    launchOptions: {
+      args: [
+        '--enable-precise-memory-info',
+        '--enable-gpu',
+        '--ignore-gpu-blocklist',
+        '--use-angle=d3d11',
+      ],
+    },
   },
   webServer: {
     command: 'npm run preview -- --host 127.0.0.1 --port 4173 --strictPort',

@@ -1,50 +1,26 @@
-# 🏛️ Documento de Arquitetura — Pirate Battle
+# Architecture
 
-Este documento descreve as principais decisões de engenharia, padrões de projeto e estratégias de integração adotadas no desenvolvimento do **Pirate Battle**, contemplando a simulação de combate em tempo real e a persistência de dados.
+## Runtime boundaries
 
----
+- **React (`src/ui/GameCanvas.tsx`)** coordinates screen state and the match lifecycle. `MainMenu.tsx`, `ScoresDialog.tsx`, and `GameControls.tsx` render the menu, score lists, reusable controls, and options form. `GameCanvas` passes state and callbacks to these views rather than owning their markup and interaction details. React receives game state callbacks at meaningful simulation updates and does not own per-frame entity state.
+- **Match data (`src/ui/hooks/useMatchRecords.ts`)** owns ranking/history queries, score submission, retries, and TanStack Query invalidation. `GameCanvas` handles local result/outbox presentation and supplies the persistence callbacks.
+- **PixiJS (`src/game/GameEngine.ts`)** coordinates the ticker, map, player, active entities, audio, and rendering. `EnemySpawner.ts` chooses spawn positions and enemy variants; `collisionSystem.ts` handles sprite collisions and enemy separation. `destroy()` removes browser listeners and destroys game resources; restart resets simulation state and reuses the initialized renderer.
+- **Configuration (`src/game/gameConfig.ts`)** provides a typed default and immutable-in-practice per-match snapshot. Gameplay entities read movement, health, damage, cooldown, projectile, ramp, and spawn settings from that snapshot.
 
-## 1. Integração React & PixiJS
+## Simulation
 
-A arquitetura separa claramente as responsabilidades de interface e de renderização gráfica de alta performance:
+The game loop consumes PixiJS ticker deltas. Movement, cooldowns, the session timer, and the spawn interval are advanced from simulation time. Pause and focus loss stop simulation updates, so elapsed wall time is not charged to a paused match. E2E mode substitutes a controlled clock while calling the same update loop and retaining real input, collisions, and rendering.
 
-- **React:** Responsável por gerir toda a árvore de componentes de interface de utilizador (UI), incluindo o **Menu Principal**, HUD de jogo em tempo real, **Painel de Pausa**, **Modal de Histórico de Partidas** e a **Tela de Game Over**.
-- **PixiJS (`GameEngine.ts`):** Responsável por gerir o ciclo de renderização gráfica (_Game Loop_), o carregamento de texturas através do `Assets` manager, o tratamento de inputs por teclado, a gestão de entidades (jogador, inimigos, projéteis e explosões) e o sistema de detecção de colisões.
-- **Sincronização:** Para evitar re-renderizações desnecessárias da árvore do React a cada frame (o que causaria quedas drásticas de desempenho a 60 FPS), o estado contínuo do combate (pontuação, vida do jogador e temporizador) é gerido na simulação do PixiJS e enviado para a interface de forma otimizada apenas quando ocorrem alterações relevantes ou através de _callbacks_ controlados.
+Projectiles and explosions are pooled and reused. Health bars are Pixi display objects synchronized with entity health and position. A defeated enemy is marked dead before further projectile collision checks, preventing duplicate damage and scoring during one update.
 
----
+## Match data and persistence
 
-## 2. Ciclo de Simulação Baseada em Tempo (`deltaMS`)
+`src/api/scoreTypes.ts` defines a match as an ID, player identity, score, end reason, duration, and full `GameConfiguration`, with a timestamp added by the API. Ranking comparisons first filter by configuration and then sort by score, duration, date, and ID. History is scoped to the stable local player ID.
 
-Para garantir que o comportamento do jogo seja consistente independentemente da taxa de atualização do monitor do utilizador:
+Axios communicates with `/api/scores`; TanStack Query handles loading, error, cache invalidation, and refresh. A match submission is stored in a local outbox with an idempotency key before sending. Success clears the matching outbox entry, failure leaves it available for retry, and the latest result is persisted for display after refresh.
 
-- O motor de jogo (`GameEngine`) utiliza o parâmetro `deltaMS` fornecido pelo `Ticker` do PixiJS em cada frame.
-- Todas as operações de movimentação, velocidade dos projéteis, _cooldowns_ de ataque e contagem regressiva do temporizador da partida são multiplicadas por este fator de tempo, garantindo que a física e a simulação correm de forma independente de quedas pontuais de FPS.
-- **Pausa e Foco:** Quando o jogo é pausado manualmente (tecla `P`/`ESC`) ou perde o foco da janela, o ciclo do _Ticker_ é interrompido ou ignorado, suspendendo temporariamente os cronômetros e o movimento sem acumular deltas indesejados ao retomar.
+MSW supplies shared fixtures from `src/mocks/fixtures.ts` and persists submitted records in `localStorage`. The GET endpoint accepts a view, player/configuration filters, page, and page size, then returns page items and a total. Ranking includes each captain's best eligible match; history is filtered by stable player ID. `src/mocks/networkScenarios.ts` defines scenarios consumed by the same handlers in development, tests, and the published build. Query parameters select scenarios and reset mock records; a seeded sequence controls variable latency. This mock contract should be mirrored by a production API.
 
----
+## Verification and known limits
 
-## 3. Gestão de Recursos e Otimização de Desempenho
-
-- **Object Pooling:** Implementado de forma nativa para gerir os projéteis e as explosões. Os objetos visuais são pré-instanciados ou reutilizados a partir de piscinas ativas/inativas, evitando a criação excessiva de novas instâncias em tempo de execução e eliminando travamentos provocados pelo _Garbage Collector_ do JavaScript durante o combate intenso.
-- **Ciclo de Vida (`onDestroy`):** Ao sair de uma partida, reiniciar ou desmontar o componente de jogo, todos os _listeners_ de eventos globais de teclado, instâncias do PixiJS, animações do _Ticker_ e timers ativos são rigorosamente limpos e destruídos para prevenir fugas de memória (_memory leaks_).
-
----
-
-## 4. Estratégia de Dados: Axios, TanStack Query e MSW
-
-A camada de dados foi arquitetada para simular um ambiente de produção real com robustez e resiliência:
-
-- **MSW (Mock Service Worker):** Interceta as requisições HTTP (`GET` e `POST` em `/api/scores`) diretamente na camada de rede. Funciona de forma transparente tanto em ambiente de desenvolvimento local quanto no pacote compilado para produção na Vercel.
-- **Axios:** Utilizado como o cliente HTTP tipado (`apiClient`) para padronizar os cabeçalhos e a comunicação com os endpoints simulados.
-- **TanStack Query (`useQuery` / `useMutation`):**
-  - Gere o cache, o estado de carregamento (`isPending`), o sucesso e a invalidação automática de consultas (`refetch`).
-  - Garante que, ao concluir uma partida, o registo seja submetido e as abas de **Top 3 Ranking** e **Match History (Últimos 10)** sejam atualizadas dinamicamente sem bloquear a experiência do utilizador.
-- **Persistência Local:** O _High Score_ pessoal é armazenado de forma síncrona no `localStorage`, assegurando que o recorde do jogador é preservado mesmo após atualizar a página (_refresh_).
-
----
-
-## 5. Limitações Conhecidas e Decisões de Balanceamento
-
-- **Limitação do MSW no Browser:** O _Service Worker_ requer que a aplicação seja servida a partir de um servidor web (como o Vite em dev ou o ambiente estático da Vercel), não funcionando adequadamente se o ficheiro `index.html` for aberto diretamente via protocolo `file://` local.
-- **Balanceamento de Combate:** O intervalo de _spawn_ dos inimigos (Chasers e Shooters) e a vida do jogador foram calibrados para proporcionar uma sessão dinâmica de 60 segundos, equilibrando o desafio de manobra em áreas restritas por ilhas com a responsividade dos disparos frontais e laterais.
+Playwright runs desktop and mobile Chromium projects with isolated browser storage, seeded randomness, controlled simulation time, traces on failures, and versioned screenshots. The performance scenario measures the available browser environment and is not a physical-device certification. Browser heap readings are approximate and depend on Chromium's memory APIs and runtime flags.

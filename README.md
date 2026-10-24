@@ -1,40 +1,77 @@
-# 🏴‍☠️ Pirate Battle
+# Pirate Battle
 
-Um jogo de combate naval desenvolvido em **React, TypeScript e PixiJS**, criado como parte de uma avaliação técnica focada em desempenho, gestão de memória, arquitetura de componentes e integração com serviços mockados (`MSW` e `TanStack Query`).
+Pirate Battle is a top-down naval shooter built with React, TypeScript, and PixiJS. React renders menus, options, the HUD, pause and result screens, and score views. PixiJS owns the arena, simulation, inputs, entities, collisions, and rendering.
 
----
+## Requirements
 
-## 🎮 Como Jogar & Controlos
+- Node.js 20 or newer
+- npm
 
-Sobreviva às vagas de navios inimigos durante 60 segundos defendendo a sua posição nas águas da fortaleza!
+## Setup and commands
 
-- **W / Seta Acima:** Navegar para a frente (o navio move-se na direção do nariz).
-- **A, D / Setas Esquerda e Direita:** Rodar o navio.
-- **ESPAÇO:** Disparo de canhão frontal.
-- **Q / E:** Disparos laterais (Bordadas a bombordo e estibordo).
-- **P / ESC:** Pausar o jogo.
+```sh
+npm install
+npm run dev          # start Vite
+npm run typecheck    # TypeScript project check
+npm run lint         # ESLint
+npm run build        # production build
+npm run preview      # serve the production build
+npm run build:e2e    # build with deterministic E2E hooks
+npm run test:e2e     # Chromium desktop and mobile E2E suite
+npm run test:e2e:update
+npm run test:performance
+```
 
----
+Playwright writes its HTML report and traces under `artifacts/`. The performance run takes about three minutes plus five lifecycle cycles and writes its measurements under `artifacts/performance/`.
 
-## 🚀 Como Executar Localmente
+## Gameplay
 
-Certifique-se de que tem o **Node.js** instalado na sua máquina.
+The default session lasts 60 seconds and spawns enemies every 3 seconds. Options let players choose a 60, 90, 120, 150, or 180 second session and a 2, 3, 4, or 5 second spawn interval. The selected values are captured in each match record, so ranking comparisons use only the same configuration.
 
-1. Clone o repositório e instale as dependências:
-   ```bash
-   npm install
-   ```
-   Inicie o servidor de desenvolvimento:
+- **W / Up:** move forward
+- **A / D or Left / Right:** rotate
+- **Space:** fire forward
+- **Q / E:** fire port / starboard
+- **P / Escape:** pause or resume
 
-Bash
-npm run dev
-Abra o endereço indicado no seu navegador (geralmente http://localhost:5173).
+On touch devices, use the on-screen controls. Preferences, player identity, the latest result, and pending score submissions are stored in `localStorage`.
 
-🛠️ Decisões Técnicas e Arquitetura
-PixiJS + React: O React gere a interface de utilizador (Menus, HUD de Jogo, Painel de Pausa, Janela de Histórico e ecrã de Game Over), enquanto o PixiJS gere o ciclo de renderização gráfica de alta performance (Game Loop).
+## API and local data
 
-Object Pooling: Implementado no motor de jogo para projéteis e explosões, eliminando a criação excessiva de objetos em tempo de execução e evitando picos de pausas provocados pelo Garbage Collector.
+Axios calls `/api/scores`; TanStack Query caches and refreshes score data. Mock Service Worker handles the API in development, Playwright, and the published build. The shared fixtures are in `src/mocks/fixtures.ts`; the shared request handlers and scenario definitions are in `src/mocks/handlers.ts` and `src/mocks/networkScenarios.ts`. Confirmed matches and idempotency keys persist in `localStorage`. Match submissions also use a local outbox so pending records can be retried after refresh. No environment variables are required for the default setup.
 
-Gestão de Estado & API Mocks: Integração com Axios e TanStack Query para submissão e listagem de recordes, interceptados de forma transparente em desenvolvimento e produção através do MSW (Mock Service Worker).
+## Network scenarios
 
-Relógio Baseado no Ticker: O cronómetro da partida utiliza o deltaMS do motor gráfico, garantindo que o tempo pausa corretamente quando o jogo é interrompido, prevenindo dessincronizações.
+Choose a reproducible MSW scenario with the `mockScenario` query parameter:
+
+| Scenario | Behavior |
+| --- | --- |
+| `success` | Normal paginated responses and successful submissions |
+| `empty` | Empty Ranking and Match History responses |
+| `slow` | Fixed delay, 1,200 ms by default |
+| `variable-latency` | Seeded deterministic delays from 100 ms to the configured maximum |
+| `out-of-order` | First request per view is delayed; subsequent requests return quickly |
+| `connection-error` | Network-level failure for reads and submissions |
+| `http-400`, `http-500` | HTTP failure responses |
+| `ranking-error`, `history-error` | Failures isolated to one read view |
+| `timeout-after-commit` | Persists a submission, then delays its response to exercise idempotent recovery |
+| `submit-unavailable` | Submission endpoint returns HTTP 503 |
+
+Examples:
+
+```text
+http://localhost:5173/?mockScenario=empty
+http://localhost:5173/?mockScenario=variable-latency&mockSeed=123&mockLatencyMs=900
+http://localhost:5173/?mockScenario=timeout-after-commit&mockResponseDelayMs=12000
+http://localhost:5173/?mockScenario=success&mockReset=1
+```
+
+`mockReset=1` clears confirmed mock matches, idempotency records, request counters, submission logs, the pending submission, and the last result, then selects `success` unless another valid scenario is specified. It preserves player identity and Options. Scenario settings remain selected in `localStorage` after refresh. Use the final example to restore the API state before a demonstration.
+
+Playwright selects the same scenarios by writing shared MSW settings to isolated browser storage. Its `scoresApi` fixture seeds records and inspects requests without intercepting `/api/scores` with `page.route`.
+
+## Deterministic test hooks
+
+The E2E build accepts `?e2e=1`. Playwright injects a seed and a controlled simulation clock through the test harness. This advances the actual game loop and leaves real input, collision, and Pixi rendering paths active. Do not enable the harness in normal production builds.
+
+Visual baselines are versioned in `e2e/game.spec.ts-snapshots/`; regenerate them intentionally with `npm run test:e2e:update` on the reference OS/browser.

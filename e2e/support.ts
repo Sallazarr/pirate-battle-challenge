@@ -1,102 +1,63 @@
-import { expect, test as base, type Page, type Route } from '@playwright/test';
+import { expect, test as base, type Page } from '@playwright/test';
+import type { MatchRecord } from '../src/api/scoreTypes';
+import { createDefaultScoreFixtures } from '../src/mocks/fixtures';
+import {
+  MOCK_POST_LOG_KEY,
+  MOCK_RECORDS_KEY,
+  MOCK_SCENARIO_KEY,
+  MOCK_SEQUENCE_KEY,
+} from '../src/mocks/networkScenarios';
+import type { NetworkScenario, NetworkScenarioSettings } from '../src/mocks/networkScenarios';
 
-export interface ScoreRecord {
-  id: string;
-  score: number;
-  date: string;
-  reason: string;
-  playerName: string;
-  isFixture?: boolean;
+export type ScoreRecord = MatchRecord;
+
+export interface MockPost {
+  key: string | null;
+  body: unknown;
 }
 
 export interface ScoresApiMock {
-  posts: Array<{ key: string | null; body: unknown }>;
-  setScores: (records: ScoreRecord[]) => void;
-  setGetMode: (mode: 'ok' | 'empty' | 'error' | 'delayed' | 'delayed-first') => void;
-  setPostMode: (mode: 'ok' | 'timeout-first' | 'delayed-first') => void;
-  records: () => ScoreRecord[];
+  fixtures: ScoreRecord[];
+  setScores: (records: ScoreRecord[]) => Promise<void>;
+  setScenario: (name: NetworkScenario, settings?: Partial<NetworkScenarioSettings>) => Promise<void>;
+  records: () => Promise<ScoreRecord[]>;
+  posts: () => Promise<MockPost[]>;
 }
 
-export const fixtures: ScoreRecord[] = [
-  ['Captain Flint', 38], ['Red Sparrow', 32], ['Blackbeard', 28],
-  ['Davy Jones', 25], ['Anne Bonny', 24], ['Storm Rider', 21],
-  ['Sea Wolf', 19], ['Iron Anchor', 15], ['Salty Dog', 12],
-].map(([playerName, score], index) => ({
-  id: `fixture-${index + 1}`,
-  playerName: String(playerName),
-  score: Number(score),
-  date: '2026-01-01T00:00:00.000Z',
-  reason: 'time_out',
-  isFixture: true,
-}));
+export const fixtures = createDefaultScoreFixtures();
 
 export const test = base.extend<{ scoresApi: ScoresApiMock }>({
   scoresApi: async ({ page }, use) => {
-    let records = [...fixtures];
-    let getMode: 'ok' | 'empty' | 'error' | 'delayed' | 'delayed-first' = 'ok';
-    let postMode: 'ok' | 'timeout-first' | 'delayed-first' = 'ok';
-    const seenKeys = new Map<string, ScoreRecord>();
-    const posts: ScoresApiMock['posts'] = [];
-    let timedOutOnce = false;
-    let delayedOnce = false;
-    let delayedGetOnce = false;
-
-    await page.route('**/api/scores', async (route: Route) => {
-      const request = route.request();
-      if (request.method() === 'GET') {
-        const responseRecords = getMode === 'empty' ? [] : [...records];
-        if (getMode === 'delayed' || (getMode === 'delayed-first' && !delayedGetOnce)) {
-          delayedGetOnce = true;
-          await new Promise((resolve) => setTimeout(resolve, 1_200));
-        }
-        if (getMode === 'error') {
-          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) });
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(responseRecords),
-        });
-        return;
-      }
-
-      if (request.method() === 'POST') {
-        const key = request.headers()['idempotency-key'] ?? null;
-        const body = request.postDataJSON() as Omit<ScoreRecord, 'id' | 'date' | 'isFixture'>;
-        posts.push({ key, body });
-        if (postMode === 'timeout-first' && !timedOutOnce) {
-          timedOutOnce = true;
-          await new Promise((resolve) => setTimeout(resolve, 900));
-        }
-        if (postMode === 'delayed-first' && !delayedOnce) {
-          delayedOnce = true;
-          await new Promise((resolve) => setTimeout(resolve, 900));
-        }
-        if (key && seenKeys.has(key)) {
-          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(seenKeys.get(key)) });
-          return;
-        }
-        const record: ScoreRecord = {
-          ...body,
-          id: `result-${posts.length}`,
-          date: new Date().toISOString(),
-          isFixture: false,
-        };
-        records = [record, ...records];
-        if (key) seenKeys.set(key, record);
-        await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(record) });
-        return;
-      }
-      await route.fallback();
-    });
-
     await use({
-      posts,
-      setScores: (nextRecords) => { records = [...nextRecords]; },
-      setGetMode: (mode) => { getMode = mode; },
-      setPostMode: (mode) => { postMode = mode; },
-      records: () => [...records],
+      fixtures,
+      setScores: async (records) => page.evaluate(({ key, records: nextRecords }) => {
+        localStorage.setItem(key, JSON.stringify(nextRecords));
+      }, { key: MOCK_RECORDS_KEY, records }),
+      setScenario: async (name, settings = {}) => page.evaluate(({ key, sequenceKey, config }) => {
+        localStorage.setItem(key, JSON.stringify(config));
+        localStorage.removeItem(sequenceKey);
+      }, {
+        key: MOCK_SCENARIO_KEY,
+        sequenceKey: MOCK_SEQUENCE_KEY,
+        config: { ...settings, name, seed: settings.seed ?? 4100 },
+      }),
+      records: async () => {
+        const stored = await page.evaluate((key) => {
+          try {
+            return JSON.parse(localStorage.getItem(key) ?? '[]') as ScoreRecord[];
+          } catch {
+            return [];
+          }
+        }, MOCK_RECORDS_KEY);
+        return [...fixtures, ...stored];
+      },
+      posts: () => page.evaluate((key) => {
+        try {
+          return JSON.parse(localStorage.getItem(key) ?? '[]') as MockPost[];
+        } catch {
+          return [];
+        }
+      }, MOCK_POST_LOG_KEY),
     });
   },
 });
@@ -107,6 +68,8 @@ export async function gotoApp(page: Page, seed = 20261023, query = 'e2e=1') {
   await page.addInitScript((config) => {
     if (!sessionStorage.getItem('__pirate_e2e_context_ready')) {
       localStorage.clear();
+      localStorage.setItem('pirate_battle_player_id', 'e2e-player');
+      localStorage.setItem('pirate_battle_mock_scenario', JSON.stringify({ name: 'success', seed: config.seed }));
       sessionStorage.setItem('__pirate_e2e_context_ready', '1');
     }
     window.__PIRATE_E2E_CONFIG__ = config;
@@ -137,7 +100,7 @@ export async function snapshot(page: Page) {
 }
 
 export async function waitForSpawn(page: Page, count: number) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     const state = await snapshot(page);
     if (state && state.spawnCount >= count) return state;
     await advance(page, 300);

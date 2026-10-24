@@ -1,15 +1,20 @@
 import { Sprite, Assets } from 'pixi.js';
+import type { GameConfiguration } from './gameConfig';
 
 export class Projectile {
   public sprite: Sprite;
   public isDead = false;
   
-  private speed = 8;
+  private readonly speed: number;
+  private readonly maxDistance: number;
+  private distanceTravelled = 0;
   private angle = 0;
 
-  constructor(x: number, y: number, angle: number) {
+  constructor(x: number, y: number, angle: number, configuration: GameConfiguration) {
     this.sprite = new Sprite();
     this.sprite.anchor.set(0.5);
+    this.speed = configuration.weapons.projectileSpeed;
+    this.maxDistance = configuration.weapons.projectileMaxDistance;
     this.spawn(x, y, angle);
   }
 
@@ -21,17 +26,16 @@ export class Projectile {
     }
   }
 
-  // OBJECT POOLING: Repor estado em vez de instanciar de novo
   public spawn(x: number, y: number, angle: number) {
     this.sprite.x = x;
     this.sprite.y = y;
     this.angle = angle;
+    this.distanceTravelled = 0;
     this.sprite.rotation = angle;
     this.isDead = false;
     this.sprite.visible = true;
   }
 
-  // OBJECT POOLING: Ocultar em vez de destruir
   public despawn() {
     this.isDead = true;
     this.sprite.visible = false;
@@ -40,10 +44,12 @@ export class Projectile {
   public update(delta: number) {
     if (this.isDead) return;
     
-    this.sprite.x += Math.cos(this.angle) * this.speed * delta;
-    this.sprite.y += Math.sin(this.angle) * this.speed * delta;
+    const distance = this.speed * delta;
+    this.sprite.x += Math.cos(this.angle) * distance;
+    this.sprite.y += Math.sin(this.angle) * distance;
+    this.distanceTravelled += distance;
 
-    if (
+    if (this.distanceTravelled >= this.maxDistance ||
       this.sprite.x < -4000 || 
       this.sprite.x > 4000 || 
       this.sprite.y < -4000 || 

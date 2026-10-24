@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { createMatchConfiguration } from '../src/game/gameConfig';
 import { test, expect, gotoApp, openGame, advance, snapshot, waitForSpawn, fixtures } from './support';
 
 test.beforeEach(async ({ page }, testInfo) => {
@@ -105,15 +106,16 @@ test('fires front and both broadsides, honoring the shot cooldown', async ({ pag
   await page.keyboard.up('Space');
 
   const countBeforeLeft = afterCooldown!.projectiles.length;
+  await advance(page, 600);
   await page.keyboard.down('q');
-  await advance(page, 80);
+  await advance(page, 20);
   await page.keyboard.up('q');
-  await advance(page, 500);
   const afterLeft = await snapshot(page);
   expect(afterLeft!.projectiles.length).toBeGreaterThan(countBeforeLeft);
 
   await page.keyboard.down('e');
-  await advance(page, 80);
+  await advance(page, 600);
+  await advance(page, 20);
   await page.keyboard.up('e');
   await advance(page, 50);
   const afterRight = await snapshot(page);
@@ -147,6 +149,20 @@ test('spawns Chasers and Shooters with fixed basic and advanced models and real 
   expect([...observedModels].some((model) => model.endsWith('-advanced'))).toBe(true);
   expect(observedHealth.has(1)).toBe(true);
   expect(observedHealth.has(2)).toBe(true);
+  let finalState = await snapshot(page);
+  for (let attempt = 0; attempt < 14 && !finalState!.enemyProjectiles.length && !finalState!.isGameOver; attempt += 1) {
+    await advance(page, 1_000);
+    finalState = await snapshot(page);
+  }
+  expect(finalState!.enemyProjectiles.length).toBeGreaterThan(0);
+});
+
+test('honors the configured interval before the first enemy spawn', async ({ page }) => {
+  await openGame(page, { time: 180, spawn: 2 });
+  await advance(page, 1_900);
+  expect((await snapshot(page))!.spawnCount).toBe(0);
+  await advance(page, 200);
+  expect((await snapshot(page))!.spawnCount).toBe(1);
 });
 
 test('spawns a boss every fifth enemy spawn with four health and only the boss health bar', async ({ page }) => {
@@ -188,11 +204,11 @@ test('pauses on focus loss, freezes the clock, and restarts with clean state', a
 });
 
 test('ends on time, saves and restores the result after refresh', async ({ page, scoresApi }) => {
-  await openGame(page, { time: 60, spawn: 5 });
+  await openGame(page, { time: 60, spawn: 3 });
   await advance(page, 60_000);
   await expect(page.getByTestId('result-screen')).toBeVisible();
   await expect(page.getByText('BATTLE COMPLETE')).toBeVisible();
-  await expect.poll(() => scoresApi.records().length).toBe(fixtures.length + 1);
+  await expect.poll(async () => (await scoresApi.records()).length).toBe(fixtures.length + 1);
   const savedScore = await page.getByTestId('result-score').textContent();
   await page.reload();
   await expect(page.getByTestId('result-screen')).toBeVisible();
@@ -201,8 +217,11 @@ test('ends on time, saves and restores the result after refresh', async ({ page,
 
 test('ends by enemy damage and persists the result, and cleans up on abandonment', async ({ page }) => {
   await openGame(page, { time: 180, spawn: 2 });
-  await advance(page, 55_000);
-  const result = await snapshot(page);
+  let result = await snapshot(page);
+  for (let i = 0; i < 90 && !result!.isGameOver; i += 1) {
+    await advance(page, 1_000);
+    result = await snapshot(page);
+  }
   await expect(page.getByTestId('result-screen')).toBeVisible();
   expect(result!.health).toBeLessThanOrEqual(0);
   await page.reload();
@@ -247,6 +266,8 @@ test('uses mobile touch controls to rotate and move the ship', async ({ page, co
 });
 
 test('paginates Ranking and Match History, including empty and failed reads', async ({ page, scoresApi }) => {
+  await scoresApi.setScores(fixtures.map((record, index) => ({ ...record, id: `extra-${index}`, playerId: `extra-player-${index}` })));
+  await page.reload();
   await page.getByRole('button', { name: 'RANKING' }).click();
   await expect(page.getByTestId('ranking-pagination')).toBeVisible();
   await expect(page.getByTestId('ranking-pagination')).toContainText('1 / 2');
@@ -259,9 +280,12 @@ test('paginates Ranking and Match History, including empty and failed reads', as
     playerName: 'Captain Jack',
     score: 20 - index,
     date: '2026-10-23T00:00:00.000Z',
-    reason: index % 2 ? 'time_out' : 'ship_destroyed',
+    reason: index % 2 ? 'time_out' as const : 'ship_destroyed' as const,
+    playerId: 'e2e-player',
+    durationSeconds: 60,
+    configuration: createMatchConfiguration(60, 3),
   }));
-  scoresApi.setScores([...personalRecords, ...fixtures]);
+  await scoresApi.setScores(personalRecords);
   await page.reload();
   await page.getByRole('button', { name: 'HISTORY' }).click();
   await expect(page.getByTestId('history-pagination')).toContainText('1 / 2');
@@ -270,20 +294,20 @@ test('paginates Ranking and Match History, including empty and failed reads', as
 });
 
 test('shows query loading, empty, and error states with retry', async ({ page, scoresApi }) => {
-  scoresApi.setGetMode('delayed');
+  await scoresApi.setScenario('slow', { latencyMs: 1_200 });
   await page.reload();
   await page.getByRole('button', { name: 'RANKING' }).click();
   await expect(page.getByTestId('scores-loading')).toBeVisible();
   await expect(page.getByTestId('ranking-modal')).toBeVisible();
   await page.getByRole('button', { name: 'CLOSE' }).click();
 
-  scoresApi.setGetMode('empty');
+  await scoresApi.setScenario('empty');
   await page.reload();
   await page.getByRole('button', { name: 'RANKING' }).click();
   await expect(page.getByTestId('ranking-empty')).toBeVisible();
   await page.getByRole('button', { name: 'CLOSE' }).click();
 
-  scoresApi.setGetMode('error');
+  await scoresApi.setScenario('ranking-error');
   await page.reload();
   await page.getByRole('button', { name: 'RANKING' }).click();
   await expect(page.getByRole('alert')).toContainText('Could not load scores');
@@ -292,17 +316,17 @@ test('shows query loading, empty, and error states with retry', async ({ page, s
 });
 
 test('registers one match and refreshes Ranking and Match History; recovers a pending outbox entry', async ({ page, scoresApi }) => {
-  await openGame(page, { time: 60, spawn: 5 });
+  await openGame(page, { time: 60, spawn: 3 });
   await advance(page, 60_000);
   await expect(page.getByTestId('result-screen')).toBeVisible();
-  await expect.poll(() => scoresApi.records().length).toBe(fixtures.length + 1);
+  await expect.poll(async () => (await scoresApi.records()).length).toBe(fixtures.length + 1);
   await page.getByRole('button', { name: 'MAIN MENU' }).click();
   await page.getByRole('button', { name: 'HISTORY' }).click();
   await expect(page.getByText(/Score:/)).toBeVisible();
   await page.getByRole('button', { name: 'CLOSE' }).click();
   await page.getByRole('button', { name: 'RANKING' }).click();
   await page.getByRole('button', { name: 'Next ranking page' }).click();
-  await expect(page.getByText('Captain Jack')).toBeVisible();
+  await expect(page.getByTestId('ranking-modal').getByText('Captain Jack')).toBeVisible();
 
   await page.getByRole('button', { name: 'CLOSE' }).click();
   await page.evaluate(() => {
@@ -311,32 +335,33 @@ test('registers one match and refreshes Ranking and Match History; recovers a pe
   });
   await page.reload();
   await expect(page.getByTestId('result-screen')).toBeVisible();
-  await expect.poll(() => scoresApi.records().filter((record) => record.playerName === 'Pending Captain').length).toBe(1);
+  await expect.poll(async () => (await scoresApi.records()).filter((record) => record.playerName === 'Pending Captain').length).toBe(1);
   await expect.poll(async () => page.evaluate(() => localStorage.getItem('pirate_battle_pending_score'))).toBeNull();
 });
 
 test('retries a timed out submission with the same key and tolerates delayed stale score reads', async ({ page, scoresApi }) => {
-  scoresApi.setPostMode('timeout-first');
+  await scoresApi.setScenario('timeout-after-commit', { responseDelayMs: 900 });
   await openGame(page, { time: 60, spawn: 5 });
   await advance(page, 60_000);
   await expect(page.getByTestId('result-screen')).toBeVisible();
-  await expect.poll(() => scoresApi.posts.length).toBeGreaterThanOrEqual(2);
-  expect(scoresApi.posts[0].key).toBeTruthy();
-  expect(scoresApi.posts.map((post) => post.key).every((key) => key === scoresApi.posts[0].key)).toBe(true);
-  expect(scoresApi.records().filter((record) => !record.isFixture)).toHaveLength(1);
+  await expect.poll(async () => (await scoresApi.posts()).length).toBeGreaterThanOrEqual(2);
+  const posts = await scoresApi.posts();
+  expect(posts[0].key).toBeTruthy();
+  expect(posts.map((post) => post.key).every((key) => key === posts[0].key)).toBe(true);
+  expect((await scoresApi.records()).filter((record) => !record.isFixture)).toHaveLength(1);
 
   await page.getByRole('button', { name: 'MAIN MENU' }).click();
   await page.evaluate(() => {
     localStorage.setItem('pirate_battle_last_result', JSON.stringify({ score: 99, health: 100, reason: 'time_out', playerName: 'Recent Captain', date: new Date().toISOString() }));
     localStorage.setItem('pirate_battle_pending_score', JSON.stringify({ idempotencyKey: 'recent-response-key', record: { score: 99, reason: 'time_out', playerName: 'Recent Captain' } }));
   });
-  scoresApi.setGetMode('delayed-first');
+  await scoresApi.setScenario('out-of-order', { latencyMs: 1_200 });
   await page.reload();
   await expect(page.getByTestId('result-screen')).toBeVisible();
-  await expect.poll(() => scoresApi.records().filter((record) => record.playerName === 'Recent Captain').length).toBe(1);
+  await expect.poll(async () => (await scoresApi.records()).filter((record) => record.playerName === 'Recent Captain').length).toBe(1);
   await page.getByRole('button', { name: 'MAIN MENU' }).click();
   await page.getByRole('button', { name: 'HISTORY' }).click();
-  await expect(page.getByText(/Score:/)).toBeVisible();
+  await expect(page.getByTestId('history-modal').getByText(/Score:/).first()).toBeVisible();
 });
 
 test('captures versioned visual baselines for menu and result states', async ({ page }) => {
@@ -367,7 +392,7 @@ export async function aimAtEnemy(page: Page, targetModel?: string) {
 }
 
 export async function fireAtEnemy(page: Page, targetModel?: string) {
-  let initialScore = (await snapshot(page))?.score ?? 0;
+  const initialScore = (await snapshot(page))?.score ?? 0;
   for (let iteration = 0; iteration < 30; iteration += 1) {
     const state = await snapshot(page);
     if (!state || !state.enemies.some((enemy) => !targetModel || enemy.model === targetModel)) break;

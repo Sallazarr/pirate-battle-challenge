@@ -4,13 +4,34 @@ html, body {
   width: 100%;
   height: 100%;
   min-height: 100dvh;
-  overflow: hidden; /* Remove as barras de scroll */
+  overflow: hidden;
   background-color: #001a33;
-  user-select: none; /* Evita selecionar texto sem querer ao clicar rápido */
+  user-select: none;
 }
 
 #root {
   width: 100%;
   height: 100dvh;
   overflow: hidden;
+}
+
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid #8ecae6;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px #001a33;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.scores-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scores-scroll::-webkit-scrollbar {
+  display: none;
 }

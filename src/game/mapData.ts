@@ -1,4 +1,3 @@
-// Dados do mapa (sem dependência do Pixi, fácil de testar).
 export interface Cell { id: number; fx?: boolean; fy?: boolean }
 export type Layer = (Cell | null)[][];
 
@@ -8,16 +7,6 @@ export const ROWS = 14;
 
 const blank = (): Layer => Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 
-// ---------------------------------------------------------------------------
-// Ilha de grama. Os tiles 6-9 / 22-25 / 38-41 / 54-57 formam UMA imagem 4x4:
-//   6   7   8   9      cantos e bordas em volta,
-//   22  23  24  25     e o miolo 23 24 / 39 40 é um único pedaço de grama
-//   38  39  40  41     (claro em cima, escuro embaixo).
-//   54  55  56  57
-// Para ilhas maiores que 4x4 o miolo é ESPELHADO (flip), assim as bordas de
-// cada tile sempre encostam numa borda igual e não aparece emenda.
-// Tamanhos válidos (largura e altura): 4, 8, 12, 16...
-// ---------------------------------------------------------------------------
 const BLOCK = [
   [6, 7, 8, 9],
   [22, 23, 24, 25],
@@ -25,7 +14,6 @@ const BLOCK = [
   [54, 55, 56, 57],
 ];
 
-// sequência do miolo: 1, 2, 2', 1', 1, 2, 2', 1' ... (' = espelhado)
 const MIRROR: [number, boolean][] = [[1, false], [2, false], [2, true], [1, true]];
 const mirrorSeq = (n: number) => Array.from({ length: n }, (_, i) => MIRROR[i % 4]);
 
@@ -49,7 +37,6 @@ function grassIsland(w: number, h: number): Cell[][] {
   return out;
 }
 
-// Ilha de areia: 1 2 3 / 17 18 19 / 33 34 35 (miolo 18 repetido)
 function sandIsland(w: number, h: number): Cell[][] {
   const out: Cell[][] = [];
   for (let r = 0; r < h; r++) {
@@ -68,7 +55,6 @@ function stamp(layer: Layer, top: number, left: number, cells: Cell[][]) {
   cells.forEach((row, r) => row.forEach((cell, c) => { layer[top + r][left + c] = cell; }));
 }
 
-// Faixa de água rasa: retângulo 3x3 (10 11 12 / 26 27 28 / 42 43 44)
 function shallowRect(layer: Layer, c0: number, r0: number, c1: number, r1: number) {
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
@@ -79,13 +65,6 @@ function shallowRect(layer: Layer, c0: number, r0: number, c1: number, r1: numbe
   }
 }
 
-// Fortaleza 8x6 (par x par, centraliza num miolo par sem meio-tile)
-//  77 16 16 47 47 16 16 78
-//  15 .  .  .  .  .  .  15
-//  31 .  .  .  .  .  .  32     (cannons 31 / 32 nas laterais)
-//  31 .  .  .  .  .  .  32
-//  15 .  .  .  .  .  .  15
-//  93 16 16 76 76 16 16 94     (portão de 2 pontes)
 function fortress(layer: Layer, top: number, left: number) {
   const F = [
     [77, 16, 16, 47, 47, 16, 16, 78],
@@ -100,28 +79,34 @@ function fortress(layer: Layer, top: number, left: number) {
 
 export interface MapData {
   layers: { name: string; data: Layer }[];
-  solids: { x: number; y: number; w: number; h: number }[]; // em tiles
+  solids: { x: number; y: number; w: number; h: number }[];
 }
+
+const ISLETS = [
+  { col: 19, row: 11, rock: 50, foliage: 70, foliageCol: 20 },
+  { col: 19, row: 1, rock: 66, foliage: 71, foliageCol: 20 },
+] as const;
 
 export function buildMapData(): MapData {
   const shallow = blank(), ground = blank(), fort = blank(), deco = blank();
 
-  // Ilha principal: terra nas colunas 1..12 e linhas 1..12 (12x12, miolo 10x10)
   shallowRect(shallow, 0, 0, 13, 13);
   stamp(ground, 1, 1, grassIsland(12, 12));
-  // Fortaleza 8x6 no centro do miolo: sobra 1 tile nas laterais e 2 em cima/embaixo
   fortress(fort, 4, 3);
 
-  // Ilha pequena de areia: colunas 17..20, linhas 5..8 (4 tiles de mar entre as ilhas)
   shallowRect(shallow, 16, 4, 21, 9);
   stamp(ground, 5, 17, sandIsland(4, 4));
 
+  for (const islet of ISLETS) {
+    shallowRect(shallow, islet.col - 1, islet.row - 1, islet.col + 2, islet.row + 2);
+    stamp(ground, islet.row, islet.col, sandIsland(2, 2));
+    deco[islet.row][islet.col] = { id: islet.rock };
+    deco[islet.row + 1][islet.foliageCol] = { id: islet.foliage };
+  }
+
   const put = (r: number, c: number, id: number) => { deco[r][c] = { id }; };
-  // pátio da fortaleza (simétrico)
   put(5, 4, 72); put(5, 9, 72); put(8, 4, 72); put(8, 9, 72);
-  // grama ao redor da fortaleza
   put(3, 3, 65); put(10, 10, 67); put(3, 10, 71); put(10, 3, 70);
-  // ilha pequena
   put(6, 18, 50); put(7, 19, 72);
 
   return {
@@ -134,6 +119,7 @@ export function buildMapData(): MapData {
     solids: [
       { x: 1, y: 1, w: 12, h: 12 },
       { x: 17, y: 5, w: 4, h: 4 },
+      ...ISLETS.map(({ col, row }) => ({ x: col, y: row, w: 2, h: 2 })),
     ],
   };
 }

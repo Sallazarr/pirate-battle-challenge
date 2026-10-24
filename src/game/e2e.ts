@@ -20,6 +20,15 @@ export interface GameTestHandle {
   snapshot: () => GameTestSnapshot;
 }
 
+export function isE2ERuntimeEnabled(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const testContextWasInjected = window.__PIRATE_E2E_CONFIG__ !== undefined;
+  const realtimePerformanceRun = params.get('realtime') === '1';
+  return (import.meta.env.DEV || import.meta.env.MODE === 'e2e')
+    && params.get('e2e') === '1'
+    && (testContextWasInjected || realtimePerformanceRun);
+}
+
 declare global {
   interface Window {
     __PIRATE_E2E_CONFIG__?: { seed: number; startTime?: number };

@@ -1,39 +1,45 @@
 import { Sprite, Assets } from 'pixi.js';
 import { now } from './gameClock';
+import type { GameConfiguration } from './gameConfig';
  
 export interface PlayerInputs {
   up: boolean;
   left: boolean;
   right: boolean;
-  space: boolean;   // tiro frontal (Space)
-  shift: boolean;   // tiro lateral esquerdo (Q)
-  ctrl: boolean;    // tiro lateral direito (E)
+  space: boolean;
+  shift: boolean;
+  ctrl: boolean;
 }
  
 export class Player {
   public sprite: Sprite;
   public isLocked = true;
-  public moveSpeed = 3;
-  public rotationSpeed = 0.05;
+  public moveSpeed: number;
+  public rotationSpeed: number;
  
-  // Objeto unificado — teclado E touch escrevem aqui
   public inputs: PlayerInputs = {
     up: false, left: false, right: false,
     space: false, shift: false, ctrl: false,
   };
  
   private lastShotTime = 0;
-  private shootCooldown = 500;
+  private shootCooldown: number;
  
   private onShoot: (x: number, y: number, angle: number, isLateral: boolean, shipRotation: number) => void;
  
   private _keydown: (e: KeyboardEvent) => void;
   private _keyup: (e: KeyboardEvent) => void;
  
-  constructor(onShoot: (x: number, y: number, angle: number, isLateral: boolean, shipRotation: number) => void) {
+  constructor(
+    onShoot: (x: number, y: number, angle: number, isLateral: boolean, shipRotation: number) => void,
+    configuration: GameConfiguration,
+  ) {
     this.sprite = new Sprite();
     this.sprite.anchor.set(0.5);
     this.onShoot = onShoot;
+    this.moveSpeed = configuration.player.moveSpeed;
+    this.rotationSpeed = configuration.player.rotationSpeed;
+    this.shootCooldown = configuration.weapons.shotCooldownMs;
  
     this._keydown = (e: KeyboardEvent) => {
       if (this.isLocked) return;
@@ -75,7 +81,6 @@ export class Player {
     if (this.inputs.left)  this.sprite.rotation -= this.rotationSpeed * delta;
     if (this.inputs.right) this.sprite.rotation += this.rotationSpeed * delta;
  
-    // Compensação de -90° porque o PNG aponta para cima
     const mathAngle = this.sprite.rotation + Math.PI / 2;
  
     if (this.inputs.up) {

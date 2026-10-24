@@ -7,6 +7,8 @@ export class AudioManager {
   private healthLowAudio: HTMLAudioElement | null = null;
   
   private currentSailingVolume = 0;
+  private sailingPlayRequested = false;
+  private healthLowActive = false;
   public isMuted = false;
 
   constructor() {
@@ -97,7 +99,8 @@ export class AudioManager {
     const fadeSpeed = 0.003 * delta;
 
     if (isMoving) {
-      if (this.sailingLoop.paused) {
+      if (!this.sailingPlayRequested) {
+        this.sailingPlayRequested = true;
         this.sailingLoop.play().catch(() => {});
       }
       this.currentSailingVolume = Math.min(maxVolume, this.currentSailingVolume + fadeSpeed);
@@ -105,10 +108,15 @@ export class AudioManager {
       this.currentSailingVolume = Math.max(0, this.currentSailingVolume - fadeSpeed);
       if (this.currentSailingVolume <= 0 && !this.sailingLoop.paused) {
         this.sailingLoop.pause();
+        this.sailingPlayRequested = false;
+      } else if (this.currentSailingVolume <= 0) {
+        this.sailingPlayRequested = false;
       }
     }
 
-    this.sailingLoop.volume = this.currentSailingVolume;
+    if (this.sailingLoop.volume !== this.currentSailingVolume) {
+      this.sailingLoop.volume = this.currentSailingVolume;
+    }
   }
 
   public stopSailing() {
@@ -117,11 +125,14 @@ export class AudioManager {
       this.sailingLoop.currentTime = 0;
       this.currentSailingVolume = 0;
       this.sailingLoop.volume = 0;
+      this.sailingPlayRequested = false;
     }
   }
 
   public setHealthLow(isLow: boolean) {
     if (this.isMuted || !this.healthLowAudio) return;
+    if (isLow === this.healthLowActive) return;
+    this.healthLowActive = isLow;
 
     if (isLow) {
       this.healthLowAudio.volume = 1;
@@ -141,9 +152,9 @@ export class AudioManager {
       this.healthLowAudio.pause();
       this.healthLowAudio.currentTime = 0;
     }
+    this.healthLowActive = false;
   }
 
-  // --- INTERFACE E MENU ---
   public playPause() {
     this.playSound('game_pause.wav', 0.5);
   }
@@ -156,7 +167,6 @@ export class AudioManager {
     this.playSound('ui_click.wav', 0.4);
   }
 
-  // --- EFEITOS DE COMBATE ---
   public playTimeWarning() {
     this.playSound('time_warning.wav', 0.4);
   }

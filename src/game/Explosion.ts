@@ -14,8 +14,6 @@ export class Explosion {
 
   public async init() {
     try {
-      // Como o Pooling exige reuso rápido, podemos carregar
-      // e cachear a textura específica desta instância
       const texture = await Assets.load(`/assets/png/default/effects/explosion_${this.type}.png`);
       this.sprite.texture = texture;
     } catch (e) {
@@ -27,17 +25,15 @@ export class Explosion {
     this.sprite.x = x;
     this.sprite.y = y;
     
-    // Repõe o tipo e a textura
     this.type = type || (Math.floor(random() * 2) + 1);
     
-    // Tenta repor a textura em cache para o novo tipo, se já estiver carregada na memória global
     import('pixi.js').then(({ Assets }) => {
       const tex = Assets.get(`/assets/png/default/effects/explosion_${this.type}.png`);
       if (tex) this.sprite.texture = tex;
     });
 
-    this.sprite.scale.set(0.3); // Comportamento original
-    this.sprite.alpha = 1;      // Repõe transparência
+    this.sprite.scale.set(0.3);
+    this.sprite.alpha = 1;
     this.isDead = false;
     this.sprite.visible = true;
   }
@@ -50,7 +46,6 @@ export class Explosion {
   public update(delta: number) {
     if (this.isDead) return;
     
-    // Animação original restaurada
     this.sprite.scale.x += 0.03 * delta;
     this.sprite.scale.y += 0.03 * delta;
     this.sprite.alpha -= 0.04 * delta; 

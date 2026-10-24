@@ -8,11 +8,10 @@ export class Island {
     this.sprite.anchor.set(0.5);
     this.sprite.x = x;
     this.sprite.y = y;
-    this.sprite.scale.set(2); // Aumenta o tamanho da ilha para oclusão visível
+    this.sprite.scale.set(2);
   }
 
   public async init() {
-    // Carrega um asset de transição ou terreno da pasta de assets
     this.sprite.texture = await Assets.load('/assets/png/default/tiles/tile_1.png');
   }
 

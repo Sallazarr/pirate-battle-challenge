@@ -9,7 +9,7 @@ export class GameMap {
     this.container = new Container();
   }
 
-  public async init() {
+  public async init(onProgress?: (progress: number) => void) {
     const map = buildMapData();
 
     for (const s of map.solids) {
@@ -19,9 +19,8 @@ export class GameMap {
     const ids = new Set<number>([73]);
     for (const layer of map.layers)
       for (const row of layer.data) for (const cell of row) if (cell) ids.add(cell.id);
-    await Promise.all([...ids].map(id => Assets.load(this.path(id))));
+    await Assets.load([...ids].map(id => this.path(id)), onProgress);
 
-    // Repete o oceano em um único sprite para evitar criar milhares de sprites.
     const ocean = new TilingSprite({
       texture: Assets.get(this.path(73)),
       width: 140 * TILE,
